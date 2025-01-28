@@ -145,14 +145,31 @@
             { value: "", label: "Select protocol" },
             { value: "tcp", label: "TCP" },
             { value: "udp", label: "UDP" },
-            { value: "icmp", label: "ICMP" }
+            { value: "icmp", label: "ICMP" },
+            { value: "icmp6", label: "ICMPv6" },
+            { value: "igmp", label: "IGMP" },
+            { value: "ipip", label: "IP-in-IP" },
+            { value: "egp", label: "EGP" },
+            { value: "igp", label: "IGP" },
+            { value: "rdp", label: "RDP" },
+            { value: "esp", label: "ESP" },
+            { value: "ah", label: "AH" },
+            { value: "l2tp", label: "L2TP" },
+            { value: "sctp", label: "SCTP" },
+            { value: "udplite", label: "UDPLite" }
         ];
     
         const ethertypes = [
             { value: "", label: "Select ethertype" },
             { value: "ipv4", label: "IPv4" },
             { value: "ipv6", label: "IPv6" },
-            { value: "arp", label: "ARP" }
+            { value: "arp", label: "ARP" },
+            { value: "wol", label: "Wake-on-LAN" },
+            { value: "rarp", label: "Reverse ARP" },
+            { value: "atalk", label: "AppleTalk" },
+            { value: "aarp", label: "AppleTalk ARP" },
+            { value: "ipx_a", label: "IPX A" },
+            { value: "ipx_b", label: "IPX B" }
         ];
 
         const normalizeRule = (rule) => {
@@ -398,15 +415,15 @@
             };
 
             const handleCreateRule = () => {
-                                // Clear port fields if ICMP is selected
-                                if (newRule.ipprotocol === 'icmp') {
-                                    newRule.sport = '';
-                                    newRule.dport = '';
-                                }
+                // Clear port fields if ICMP or ICMPv6 is selected
+                if (newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6') {
+                    newRule.sport = '';
+                    newRule.dport = '';
+                }
 
-                                const cidrPattern = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([1-9]|[12][0-9]|3[012])$/;
-                                const isIpSrcValid = !newRule.ipsrc || cidrPattern.test(newRule.ipsrc);
-                                const isIpDestValid = !newRule.ipdest || cidrPattern.test(newRule.ipdest);
+                const cidrPattern = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([1-9]|[12][0-9]|3[012])$/;
+                const isIpSrcValid = !newRule.ipsrc || cidrPattern.test(newRule.ipsrc);
+                const isIpDestValid = !newRule.ipdest || cidrPattern.test(newRule.ipdest);
 
                 setInvalidFields({
                     ipsrc: !isIpSrcValid,
@@ -614,13 +631,13 @@
                             placeholder: 'Source port (e.g., 80)',
                             value: newRule.sport,
                             onChange: (e) => setNewRule({...newRule, sport: e.target.value}),
-                            disabled: newRule.ipprotocol === 'icmp'
+                            disabled: newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6'
                         }),
                         e('input', {
                             placeholder: 'Destination port (e.g., 80)',
                             value: newRule.dport,
                             onChange: (e) => setNewRule({...newRule, dport: e.target.value}),
-                            disabled: newRule.ipprotocol === 'icmp'
+                            disabled: newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6'
                         }),
                         e('select', {
                             value: newRule.ipprotocol,
