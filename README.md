@@ -4,4 +4,5 @@ This code is being generated using https://www.trae.ai and https://claude.ai, fe
 
 Live demo: https://zerotier.bytesec.pro/
 
-![image](https://github.com/user-attachments/assets/7c3994c4-98f0-4d06-b6f1-6012f9144b61)
+![image](https://github.com/user-attachments/assets/564193be-cd1a-4a37-bc1f-68944fbe3f01)
+
