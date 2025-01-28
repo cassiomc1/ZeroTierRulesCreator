@@ -6,5 +6,6 @@ For all options to use rules, please visit the official documentation: https://d
 
 Live demo: https://zerotier.bytesec.pro/
 
-![image](https://github.com/user-attachments/assets/564193be-cd1a-4a37-bc1f-68944fbe3f01)
+![image](https://github.com/user-attachments/assets/989b7d78-1e2b-4430-a8db-b6a680b2d06e)
+
 
