@@ -392,7 +392,11 @@
                 sport: "",
                 dport: "",
                 ipprotocol: "",
-                ethertype: ""
+                ethertype: "",
+                ztsrc: "",
+                ztdest: "",
+                macsrc: "",
+                macdest: ""
             });
             const [invalidFields, setInvalidFields] = React.useState({
                 ipsrc: false,
@@ -453,6 +457,10 @@
                 if (newRule.sport) conditions.push(`source port ${newRule.sport}`);
                 if (newRule.dport) conditions.push(`destination port ${newRule.dport}`);
                 if (newRule.ipprotocol) conditions.push(`using ${newRule.ipprotocol.toUpperCase()}`);
+                if (newRule.ztsrc) conditions.push(`ZeroTier source ${newRule.ztsrc}`);
+                if (newRule.ztdest) conditions.push(`ZeroTier destination ${newRule.ztdest}`);
+                if (newRule.macsrc) conditions.push(`MAC source ${newRule.macsrc}`);
+                if (newRule.macdest) conditions.push(`MAC destination ${newRule.macdest}`);
                 
                 ruleComment += conditions.length ? conditions.join(", ") : "all traffic";
                 
@@ -464,6 +472,10 @@
                 if (newRule.sport) rule += ` sport ${newRule.sport}`;
                 if (newRule.dport) rule += ` dport ${newRule.dport}`;
                 if (newRule.ipprotocol) rule += ` ipprotocol ${newRule.ipprotocol}`;
+                if (newRule.ztsrc) rule += ` ztsrc ${newRule.ztsrc}`;
+                if (newRule.ztdest) rule += ` ztdest ${newRule.ztdest}`;
+                if (newRule.macsrc) rule += ` macsrc ${newRule.macsrc}`;
+                if (newRule.macdest) rule += ` macdest ${newRule.macdest}`;
                 rule += ";";
         
                 setImportedRules(prev => {
@@ -605,6 +617,26 @@
                         }, ethertypes.map(type => 
                             e('option', { value: type.value, key: type.value }, type.label)
                         )),
+                        e('input', {
+                            placeholder: 'ZeroTier Source Address',
+                            value: newRule.ztsrc,
+                            onChange: (e) => setNewRule({...newRule, ztsrc: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'ZeroTier Destination Address',
+                            value: newRule.ztdest,
+                            onChange: (e) => setNewRule({...newRule, ztdest: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'MAC Source Address',
+                            value: newRule.macsrc,
+                            onChange: (e) => setNewRule({...newRule, macsrc: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'MAC Destination Address',
+                            value: newRule.macdest,
+                            onChange: (e) => setNewRule({...newRule, macdest: e.target.value})
+                        }),
                         e('input', {
                             placeholder: 'Source IP (e.g., 10.0.0.0/24)',
                             value: newRule.ipsrc,
