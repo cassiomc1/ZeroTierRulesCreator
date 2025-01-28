@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZeroTier Rules Creator - Easy Network Rule Management</title>
+    <meta name="description" content="Create and manage ZeroTier network rules easily. Visual interface for configuring firewall rules, network policies, and traffic control in ZeroTier networks.">
+    <meta name="keywords" content="ZeroTier, network rules, firewall rules, ZeroTier configuration, network security, traffic control, network policies, ZeroTier management, network management">
+    <meta name="author" content="Cassio Marques">
+    <meta property="og:title" content="ZeroTier Rules Creator - Easy Network Rule Management">
+    <meta property="og:description" content="Create and manage ZeroTier network rules easily. Visual interface for configuring firewall rules and network policies.">
+    <meta property="og:type" content="website">
+    <meta name="robots" content="index, follow">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --bg-dark: #111827;
+            --bg-card: #1f2937;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --border-color: #374151;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+    
+        html, body {
+            overflow-x: hidden;
+        }
+    
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.5;
+            padding: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+    
+        .container {
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+    
+        h1 {
+            color: var(--text-primary);
+            margin-bottom: 2rem;
+            font-size: 1.75rem;
+        }
+    
+        .form-group {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+    
+        select, input, textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+    
+        .card {
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-top: 1.5rem;
+            border: 1px solid var(--border-color);
+        }
+        
+        .btn {
+            background: var(--primary);
+            color: var(--text-primary);
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .btn:hover {
+            background: var(--primary-hover);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    
+        .rule-text {
+            font-family: monospace;
+            background: var(--bg-dark);
+            padding: 0.75rem;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--border-color);
+            overflow-x: auto;
+        }
+    
+        @media (min-width: 768px) {
+            body {
+                padding: 2rem;
+            }
+    
+            .container {
+                padding: 2rem;
+            }
+    
+            .form-group {
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            }
+    
+            h1 {
+                font-size: 1.875rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script>
+        const e = React.createElement;
+
+        const protocols = [
+            { value: "", label: "Select protocol" },
+            { value: "tcp", label: "TCP" },
+            { value: "udp", label: "UDP" },
+            { value: "icmp", label: "ICMP" }
+        ];
+    
+        const ethertypes = [
+            { value: "", label: "Select ethertype" },
+            { value: "ipv4", label: "IPv4" },
+            { value: "ipv6", label: "IPv6" },
+            { value: "arp", label: "ARP" }
+        ];
+
+        const normalizeRule = (rule) => {
+            // Check if it's a tag definition
+            if (rule.trim().startsWith('tag ')) {
+                return rule.split('\n')
+                    .map(line => {
+                        const trimmed = line.trim();
+                        if (trimmed.startsWith('tag')) {
+                            return '# Define a new tag\n' + line;
+                        } else if (trimmed.startsWith('id')) {
+                            return '# Set unique identifier for the tag\n' + line;
+                        } else if (trimmed.startsWith('enum')) {
+                            return '# Define enum value and its name\n' + line;
+                        } else if (trimmed.startsWith('default')) {
+                            return '# Set default value when no enum matches\n' + line;
+                        }
+                        return line;
+                    })
+                    .join('\n');
+            }
+
+            // Original logic for other rules
+            const combined = rule
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => !line.startsWith('#'))
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .replace(/\s*;\s*/g, ';')
+                .replace(/\s+and\s+/g, ' and ')
+                .trim();
+            
+            if (combined.includes(' and ')) {
+                return combined;
+            }
+            
+            return combined;
+        };
+
+        const handleImportRules = () => {
+            let currentRule = '';
+            const rules = [];
+            
+            importedRules.split('\n').forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) return;
+                
+                if (trimmed.startsWith('accept') || trimmed.startsWith('drop')) {
+                    if (currentRule && currentRule.endsWith(';')) {
+                        rules.push(currentRule);
+                        currentRule = '';
+                    }
+                    currentRule = trimmed;
+                } else if (currentRule) {
+                    currentRule += ' ' + trimmed;
+                }
+                
+                if (trimmed.endsWith(';')) {
+                    rules.push(currentRule);
+                    currentRule = '';
+                }
+            });
+            
+            if (currentRule) {
+                rules.push(currentRule);
+            }
+            
+            // Format the imported rules text
+            const formattedRules = rules
+                .filter(rule => rule.trim())
+                .filter(rule => rule.startsWith('accept') || rule.startsWith('drop'))
+                .map(rule => rule.replace(/\s+/g, ' ').trim())
+                .join('\n');
+            
+            setImportedRules(formattedRules);
+            
+            const explained = rules
+                .filter(rule => rule.trim())
+                .filter(rule => rule.startsWith('accept') || rule.startsWith('drop'))
+                .map(rule => ({
+                    original: rule.replace(/\s+/g, ' ').trim(),
+                    explanation: explainRule(rule)
+                }));
+            
+            setExplanations(explained);
+        };
+
+        const explainRule = (rule) => {
+            // Normalize the rule by removing line breaks and extra spaces
+            const normalizedRule = rule
+                .replace(/\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            
+            if (!normalizedRule) return "";
+            
+            // Check if it's a tag definition
+            if (normalizedRule.startsWith('tag ')) {
+                try {
+                    const parts = normalizedRule.split(' ');
+                    const tagName = parts[1];
+                    const tagId = parts[parts.indexOf('id') + 1];
+                    
+                    // Extract enums
+                    const enums = [];
+                    let i = parts.indexOf('enum');
+                    while (i !== -1 && i < parts.length - 2) {
+                        enums.push({
+                            number: parts[i + 1],
+                            name: parts[i + 2]
+                        });
+                        i = parts.indexOf('enum', i + 1);
+                    }
+                    
+                    // Get default value
+                    const defaultValue = parts[parts.indexOf('default') + 1];
+                    
+                    // Build explanation
+                    const enumsExplanation = enums
+                        .map(e => `${e.name} (ID: ${e.number})`)
+                        .join(', ');
+                    
+                    return `Defines tag "${tagName}" with ID ${tagId}, containing values: ${enumsExplanation}. Default value: ${defaultValue}`;
+                } catch (error) {
+                    console.error("Error analyzing tag:", error);
+                    return "Unknown or malformed tag";
+                }
+            }
+            
+            // Original rule explanation logic for accept/drop rules
+            if (!(normalizedRule.startsWith('accept') || normalizedRule.startsWith('drop')) || 
+                !normalizedRule.endsWith(';')) {
+                return "";
+            }
+            
+            const parts = normalizedRule.toLowerCase().split(" ");
+            const action = parts[0];
+            
+            try {
+                const ruleMap = {};
+                let isNotRule = false;
+                
+                // Parse all parts of the combined rule
+                for (let i = 1; i < parts.length; i++) {
+                    if (parts[i] === "not") {
+                        isNotRule = true;
+                        continue;
+                    }
+                    if (parts[i] === "and") continue;
+                    
+                    const key = parts[i].replace(";", "");
+                    const value = parts[i + 1]?.replace(";", "");
+                    if (value) {
+                        ruleMap[key] = value;
+                        i++; // Skip the next part since we used it as value
+                    }
+                }
+
+                // Check for standalone "accept;" rule
+                if (normalizedRule === "accept;") {
+                    return "Allows all traffic";
+                }
+
+                // Rest of the function remains the same
+                if (Object.keys(ruleMap).length === 0) {
+                    return action === "accept" ? "Allows all traffic" : "Block all traffic";
+                }
+
+                if (action === "drop") {
+                    if (isNotRule && parts.includes("ethertype")) {
+                        const types = Object.values(ruleMap)
+                            .filter(v => v)
+                            .join(", ");
+                        return `Blocks all packets that are not of type: ${types}`;
+                    }
+
+                    const conditions = [];
+                    if (ruleMap.ipsrc) conditions.push(`source IP ${ruleMap.ipsrc}`);
+                    if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
+                    if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
+                    if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
+
+                    return conditions.length > 0
+                        ? `Blocks packets with ${conditions.join(" and ")}`
+                        : "Blocks all packets";
+                }
+
+                if (action === "accept") {
+                    const conditions = [];
+                    if (ruleMap.ipsrc) conditions.push(`source IP ${ruleMap.ipsrc}`);
+                    if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
+                    if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
+                    if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
+
+                    return conditions.length > 0
+                        ? `Allows packets with ${conditions.join(" and ")}`
+                        : "Allows all packets";
+                }
+            } catch (error) {
+                console.error("Error analyzing rule:", error);
+                return "Unknown or malformed rule";
+            }
+
+            return "Unknown rule";
+        };
+
+        function App() {
+            const [importedRules, setImportedRules] = React.useState("");
+            const [explanations, setExplanations] = React.useState([]);
+            const [newTag, setNewTag] = React.useState({
+                name: '',
+                id: '',
+                enums: []
+            });
+            const [newRule, setNewRule] = React.useState({
+                action: "accept",
+                ipsrc: "",
+                ipdest: "",
+                sport: "",
+                dport: "",
+                ipprotocol: "",
+                ethertype: ""
+            });
+            const [invalidFields, setInvalidFields] = React.useState({
+                ipsrc: false,
+                ipdest: false
+            });
+
+            const validateIpCidr = (value, field) => {
+                if (!value) return "";
+                
+                // Exige que o IP tenha máscara CIDR
+                const cidrPattern = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([1-9]|[12][0-9]|3[012])$/;
+                const isValid = value ? cidrPattern.test(value) : true;
+                
+                setInvalidFields(prev => ({
+                    ...prev,
+                    [field]: value && !isValid
+                }));
+                
+                return value;
+            };
+
+            const handleCreateRule = () => {
+                                // Clear port fields if ICMP is selected
+                                if (newRule.ipprotocol === 'icmp') {
+                                    newRule.sport = '';
+                                    newRule.dport = '';
+                                }
+
+                                const cidrPattern = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([1-9]|[12][0-9]|3[012])$/;
+                                const isIpSrcValid = !newRule.ipsrc || cidrPattern.test(newRule.ipsrc);
+                                const isIpDestValid = !newRule.ipdest || cidrPattern.test(newRule.ipdest);
+
+                setInvalidFields({
+                    ipsrc: !isIpSrcValid,
+                    ipdest: !isIpDestValid
+                });
+
+                if (!isIpSrcValid || !isIpDestValid) {
+                    alert('Please fix the fields marked in red before adding the rule.');
+                    return;
+                }
+
+                // Default rule with its comment
+                const defaultRule = "# This default rule blocks all unknown protocols for enhanced security and permit ARP communication (Layer 2)\ndrop not ethertype ipv4 and not ethertype arp and not ethertype ipv6;";
+                
+                // Create comment explaining the new rule
+                let ruleComment = "# ";
+                if (newRule.action === "accept") {
+                    ruleComment += "Allows ";
+                } else {
+                    ruleComment += "Blocks ";
+                }
+                
+                const conditions = [];
+                if (newRule.ethertype) conditions.push(`${newRule.ethertype} traffic`);
+                if (newRule.ipsrc) conditions.push(`from ${newRule.ipsrc}`);
+                if (newRule.ipdest) conditions.push(`to ${newRule.ipdest}`);
+                if (newRule.sport) conditions.push(`source port ${newRule.sport}`);
+                if (newRule.dport) conditions.push(`destination port ${newRule.dport}`);
+                if (newRule.ipprotocol) conditions.push(`using ${newRule.ipprotocol.toUpperCase()}`);
+                
+                ruleComment += conditions.length ? conditions.join(", ") : "all traffic";
+                
+                // Create the rule
+                let rule = `${newRule.action}`;
+                if (newRule.ethertype) rule += ` ethertype ${newRule.ethertype}`;
+                if (newRule.ipsrc) rule += ` ipsrc ${newRule.ipsrc}`;
+                if (newRule.ipdest) rule += ` ipdest ${newRule.ipdest}`;
+                if (newRule.sport) rule += ` sport ${newRule.sport}`;
+                if (newRule.dport) rule += ` dport ${newRule.dport}`;
+                if (newRule.ipprotocol) rule += ` ipprotocol ${newRule.ipprotocol}`;
+                rule += ";";
+        
+                setImportedRules(prev => {
+                    if (!prev.includes(defaultRule)) {
+                        return defaultRule + "\n\n" + ruleComment + "\n" + rule;
+                    }
+                    return prev + "\n\n" + ruleComment + "\n" + rule;
+                });
+            };
+        
+            const handleEnumChange = (index, field, value) => {
+                setNewTag(prev => {
+                    const newEnums = [...prev.enums];
+                    newEnums[index] = { ...newEnums[index], [field]: value };
+                    return { ...prev, enums: newEnums };
+                });
+            };
+
+            const addEnum = () => {
+                setNewTag(prev => ({
+                    ...prev,
+                    enums: [...prev.enums, { number: '', name: '' }]
+                }));
+            };
+
+            const removeEnum = (index) => {
+                setNewTag(prev => ({
+                    ...prev,
+                    enums: prev.enums.filter((_, i) => i !== index)
+                }));
+            };
+
+            const handleCreateTag = () => {
+                if (!newTag.name || !newTag.id) {
+                    alert('Tag name and ID are required');
+                    return;
+                }
+
+                const tagCode = `tag ${newTag.name}\n  id ${newTag.id}\n` +
+                    newTag.enums.map(e => `  enum ${e.number} ${e.name}`).join('\n') +
+                    '\n  default 0\n;';
+
+                setImportedRules(prev => prev ? `${prev}\n\n${tagCode}` : tagCode);
+                
+                // Reset form
+                setNewTag({
+                    name: '',
+                    id: '',
+                    enums: []
+                });
+            };
+        
+            const handleImportRules = () => {
+                const parsedRules = importedRules
+                    .split('\n')  // Changed from split(';') to split('\n')
+                    .map(rule => rule.trim())
+                    .filter(rule => rule && !rule.startsWith('#'))  // Filter out empty lines and comments
+                    .map(rule => rule + (rule.endsWith(';') ? '' : ';'));
+                
+                const explained = parsedRules.map(rule => ({
+                    original: normalizeRule(rule),
+                    explanation: explainRule(rule)
+                }));
+                
+                setExplanations(explained);
+            };
+        
+            return e('div', { className: 'container' }, [
+                e('h1', { key: 'title' }, 'ZeroTier Rules Creator'),
+                e('p', { 
+                    key: 'statelessNote',
+                    style: { 
+                        color: 'var(--text-secondary)',
+                        marginBottom: '2rem',
+                        fontSize: '0.9rem'
+                    }
+                }, 'Note: ZeroTier act as a stateless firewall, so you may need to create return traffic rules explicitly.'),
+                
+                e('div', { key: 'import', className: 'card' }, [
+                    e('h2', { key: 'importTitle' }, 'Import Rules'),
+                    e('textarea', {
+                        key: 'importTextarea',
+                        placeholder: 'Paste your rules here',
+                        value: importedRules,
+                        onChange: (e) => setImportedRules(e.target.value),
+                        className: 'mb-4'
+                    }),
+                    // Add formatted rules display with line breaks
+                    importedRules && e('div', { 
+                        key: 'formattedRules',
+                        style: { marginTop: '1rem' }
+                    }, [
+                        e('h3', { 
+                            key: 'formattedTitle',
+                            style: { 
+                                color: 'var(--text-secondary)',
+                                marginBottom: '0.5rem',
+                                fontSize: '1rem'
+                            }
+                        }, 'Formatted Rules and Explanation:'),
+                        e('div', { 
+                            key: 'formattedText',
+                            className: 'rule-text',
+                            style: { whiteSpace: 'pre-wrap' }
+                        }, importedRules
+                            .split('\n')
+                            .map(line => line.trim())
+                            .filter(line => line && !line.startsWith('#'))
+                            .join(' ')
+                            .replace(/\s+/g, ' ')
+                            .replace(/;\s*/g, ';')
+                            .split(';')
+                            .filter(rule => rule.trim())
+                            .map(rule => {
+                                if (rule.trim().startsWith('tag')) {
+                                    // For tag rules, only show explanation
+                                    return `# ${explainRule(rule + ';')}`;
+                                }
+                                return `# ${explainRule(rule + ';')}\n${rule};`;
+                            })
+                            .join('\n\n')),
+                    ]),
+                ]),
+        
+                e('div', { key: 'create', className: 'card' }, [
+                    e('h2', { key: 'createTitle' }, 'Create New Rule'),
+                    e('div', { key: 'form', className: 'form-group' }, [
+                        e('select', {
+                            key: 'action',
+                            value: newRule.action,
+                            onChange: (e) => setNewRule({...newRule, action: e.target.value}),
+                        }, [
+                            e('option', { value: 'accept' }, 'Accept'),
+                            e('option', { value: 'drop' }, 'Drop')
+                        ]),
+                        e('select', {
+                            value: newRule.ethertype,
+                            onChange: (e) => setNewRule({...newRule, ethertype: e.target.value}),
+                        }, ethertypes.map(type => 
+                            e('option', { value: type.value, key: type.value }, type.label)
+                        )),
+                        e('input', {
+                            placeholder: 'Source IP (e.g., 10.0.0.0/24)',
+                            value: newRule.ipsrc,
+                            onChange: (e) => setNewRule({
+                                ...newRule, 
+                                ipsrc: validateIpCidr(e.target.value, "ipsrc")
+                            }),
+                            style: {
+                                border: invalidFields.ipsrc ? '2px solid var(--danger)' : '1px solid #d1d5db'
+                            }
+                        }),
+                        e('input', {
+                            placeholder: 'Destination IP (e.g., 192.168.1.0/24)',
+                            value: newRule.ipdest,
+                            onChange: (e) => setNewRule({
+                                ...newRule, 
+                                ipdest: validateIpCidr(e.target.value, "ipdest")
+                            }),
+                            style: {
+                                border: invalidFields.ipdest ? '2px solid var(--danger)' : '1px solid #d1d5db'
+                            }
+                        }),
+                        e('input', {
+                            placeholder: 'Source port (e.g., 80)',
+                            value: newRule.sport,
+                            onChange: (e) => setNewRule({...newRule, sport: e.target.value}),
+                            disabled: newRule.ipprotocol === 'icmp'
+                        }),
+                        e('input', {
+                            placeholder: 'Destination port (e.g., 80)',
+                            value: newRule.dport,
+                            onChange: (e) => setNewRule({...newRule, dport: e.target.value}),
+                            disabled: newRule.ipprotocol === 'icmp'
+                        }),
+                        e('select', {
+                            value: newRule.ipprotocol,
+                            onChange: (e) => setNewRule({...newRule, ipprotocol: e.target.value}),
+                        }, protocols.map(proto => 
+                            e('option', { value: proto.value, key: proto.value }, proto.label)
+                        ))
+                    ]),
+                    e('button', {
+                        className: 'btn',
+                        onClick: handleCreateRule
+                    }, 'Add Rule')
+                ]),
+
+                // Add the tag creation section here
+                e('div', { key: 'createTag', className: 'card' }, [
+                    e('h2', { key: 'createTagTitle' }, 'Create Tag'),
+                    e('p', {
+                        key: 'tagExample',
+                        style: {
+                            color: 'var(--text-secondary)',
+                            marginBottom: '1rem',
+                            whiteSpace: 'pre-wrap',
+                            fontFamily: 'monospace',
+                            fontSize: '0.9rem'
+                        }
+                    }, 'Example:\n# Create a tag for which department someone is in\ntag department\n  id 1000                 # arbitrary, but must be unique\n  enum 100 sales\n  enum 200 engineering\n  enum 300 support\n  enum 400 manufacturing\n  default 0\n;'),
+                    e('div', { key: 'tagForm', className: 'form-group' }, [
+                        e('input', {
+                            key: 'tagName',
+                            placeholder: 'Tag name',
+                            value: newTag.name,
+                            onChange: (e) => setNewTag(prev => ({ ...prev, name: e.target.value }))
+                        }),
+                        e('input', {
+                            key: 'tagId',
+                            type: 'number',
+                            placeholder: 'Tag ID',
+                            value: newTag.id,
+                            onChange: (e) => setNewTag(prev => ({ ...prev, id: e.target.value }))
+                        })
+                    ]),
+                    e('div', { key: 'enumList' },
+                        newTag.enums.map((enumItem, index) => 
+                            e('div', { 
+                                key: `enum-${index}`,
+                                className: 'form-group',
+                                style: { 
+                                    display: 'grid',
+                                    gridTemplateColumns: '1fr 1fr auto',
+                                    gap: '0.5rem',
+                                    marginBottom: '0.5rem'
+                                }
+                            }, [
+                                e('input', {
+                                    type: 'number',
+                                    placeholder: 'Enum number',
+                                    value: enumItem.number,
+                                    onChange: (e) => handleEnumChange(index, 'number', e.target.value)
+                                }),
+                                e('input', {
+                                    placeholder: 'Enum name',
+                                    value: enumItem.name,
+                                    onChange: (e) => handleEnumChange(index, 'name', e.target.value)
+                                }),
+                                e('button', {
+                                    className: 'btn',
+                                    onClick: () => removeEnum(index),
+                                    style: { background: 'var(--danger)' }
+                                }, 'Remove')
+                            ])
+                        )
+                    ),
+                    e('div', { 
+                        style: { 
+                            display: 'flex', 
+                            gap: '1rem',
+                            marginTop: '1rem'
+                        }
+                    }, [
+                        e('button', {
+                            className: 'btn',
+                            onClick: addEnum
+                        }, 'Add Enum'),
+                        e('button', {
+                            className: 'btn',
+                            onClick: handleCreateTag
+                        }, 'Generate Tag')
+                    ])
+                ]),
+
+                explanations.length > 0 && e('div', { key: 'explanations', className: 'card' }, [
+                    e('ul', { key: 'explanationsList' },
+                        explanations.map((item, index) =>
+                            e('li', { key: index }, [
+                                e('div', { key: 'rule', className: 'rule-text' }, item.original),
+                                e('div', { key: 'explanation' }, item.explanation)
+                            ])
+                        )
+                    )
+                ])
+            ]);
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(e(App));
+    </script>
+    <div style="text-align: center; margin-top: 2rem; color: var(--text-secondary); padding-bottom: 1rem;">
+        <p>Questions and suggestions:</p>
+        <p>Email: <a href="mailto:cassio@bytesec.pro" style="color: var(--primary); text-decoration: none;">cassio@bytesec.pro</a></p>
+        <p>Linkedin: <a href="https://www.linkedin.com/in/marquescassio/" target="_blank" style="color: var(--primary); text-decoration: none;">https://www.linkedin.com/in/marquescassio/</a></p>
+        <p style="margin-top: 1rem; font-style: italic;">New features coming soon, such as creating rules using tags.</p>
+        <p style="margin-top: 1rem; opacity: 0.7;">2025 - Rev 1.1</p>
+    </div>
+</body>
+</html>
