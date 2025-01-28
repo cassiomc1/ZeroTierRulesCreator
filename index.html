@@ -352,6 +352,12 @@
                     if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
                     if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
                     if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
+                    if (ruleMap.tdeq) conditions.push(`tags are equal (${ruleMap.tdeq})`);
+                    if (ruleMap.tdne) conditions.push(`tags are different (${ruleMap.tdne})`);
+                    if (ruleMap.tdgt) conditions.push(`destination tag is greater than (${ruleMap.tdgt})`);
+                    if (ruleMap.tdlt) conditions.push(`destination tag is less than (${ruleMap.tdlt})`);
+                    if (ruleMap.tsgt) conditions.push(`source tag is greater than (${ruleMap.tsgt})`);
+                    if (ruleMap.tslt) conditions.push(`source tag is less than (${ruleMap.tslt})`);
 
                     return conditions.length > 0
                         ? `Blocks packets with ${conditions.join(" and ")}`
@@ -364,6 +370,12 @@
                     if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
                     if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
                     if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
+                    if (ruleMap.tdeq) conditions.push(`tags are equal (${ruleMap.tdeq})`);
+                    if (ruleMap.tdne) conditions.push(`tags are different (${ruleMap.tdne})`);
+                    if (ruleMap.tdgt) conditions.push(`destination tag is greater than (${ruleMap.tdgt})`);
+                    if (ruleMap.tdlt) conditions.push(`destination tag is less than (${ruleMap.tdlt})`);
+                    if (ruleMap.tsgt) conditions.push(`source tag is greater than (${ruleMap.tsgt})`);
+                    if (ruleMap.tslt) conditions.push(`source tag is less than (${ruleMap.tslt})`);
 
                     return conditions.length > 0
                         ? `Allows packets with ${conditions.join(" and ")}`
@@ -386,18 +398,21 @@
                 enums: []
             });
             const [newRule, setNewRule] = React.useState({
-                action: "accept",
-                ipsrc: "",
-                ipdest: "",
-                sport: "",
-                dport: "",
-                ipprotocol: "",
-                ethertype: "",
-                ztsrc: "",
-                ztdest: "",
-                macsrc: "",
-                macdest: ""
-            });
+                                action: "accept",
+                                ipsrc: "",
+                                ipdest: "",
+                                sport: "",
+                                dport: "",
+                                ipprotocol: "",
+                                ethertype: "",
+                                ztsrc: "",
+                                ztdest: "",
+                                macsrc: "",
+                                macdest: "",
+                                // Adicionando os campos para regras com tags
+                                tagOperator: "",
+                                tagName: ""
+                            });
             const [invalidFields, setInvalidFields] = React.useState({
                 ipsrc: false,
                 ipdest: false
@@ -450,32 +465,45 @@
                     ruleComment += "Blocks ";
                 }
                 
-                const conditions = [];
-                if (newRule.ethertype) conditions.push(`${newRule.ethertype} traffic`);
-                if (newRule.ipsrc) conditions.push(`from ${newRule.ipsrc}`);
-                if (newRule.ipdest) conditions.push(`to ${newRule.ipdest}`);
-                if (newRule.sport) conditions.push(`source port ${newRule.sport}`);
-                if (newRule.dport) conditions.push(`destination port ${newRule.dport}`);
-                if (newRule.ipprotocol) conditions.push(`using ${newRule.ipprotocol.toUpperCase()}`);
-                if (newRule.ztsrc) conditions.push(`ZeroTier source ${newRule.ztsrc}`);
-                if (newRule.ztdest) conditions.push(`ZeroTier destination ${newRule.ztdest}`);
-                if (newRule.macsrc) conditions.push(`MAC source ${newRule.macsrc}`);
-                if (newRule.macdest) conditions.push(`MAC destination ${newRule.macdest}`);
+                const commentConditions = [];
+                if (newRule.ethertype) commentConditions.push(`${newRule.ethertype} traffic`);
+                if (newRule.ipsrc) commentConditions.push(`from ${newRule.ipsrc}`);
+                if (newRule.ipdest) commentConditions.push(`to ${newRule.ipdest}`);
+                if (newRule.sport) commentConditions.push(`source port ${newRule.sport}`);
+                if (newRule.dport) commentConditions.push(`destination port ${newRule.dport}`);
+                if (newRule.ipprotocol) commentConditions.push(`using ${newRule.ipprotocol.toUpperCase()}`);
+                if (newRule.ztsrc) commentConditions.push(`ZeroTier source ${newRule.ztsrc}`);
+                if (newRule.ztdest) commentConditions.push(`ZeroTier destination ${newRule.ztdest}`);
+                if (newRule.macsrc) commentConditions.push(`MAC source ${newRule.macsrc}`);
+                if (newRule.macdest) commentConditions.push(`MAC destination ${newRule.macdest}`);
+                if (newRule.tagOperator && newRule.tagName) {
+                    commentConditions.push(`with tag operation: ${newRule.tagOperator} ${newRule.tagName}`);
+                }
                 
-                ruleComment += conditions.length ? conditions.join(", ") : "all traffic";
+                ruleComment += commentConditions.length ? commentConditions.join(", ") : "all traffic";
                 
                 // Create the rule
                 let rule = `${newRule.action}`;
-                if (newRule.ethertype) rule += ` ethertype ${newRule.ethertype}`;
-                if (newRule.ipsrc) rule += ` ipsrc ${newRule.ipsrc}`;
-                if (newRule.ipdest) rule += ` ipdest ${newRule.ipdest}`;
-                if (newRule.sport) rule += ` sport ${newRule.sport}`;
-                if (newRule.dport) rule += ` dport ${newRule.dport}`;
-                if (newRule.ipprotocol) rule += ` ipprotocol ${newRule.ipprotocol}`;
-                if (newRule.ztsrc) rule += ` ztsrc ${newRule.ztsrc}`;
-                if (newRule.ztdest) rule += ` ztdest ${newRule.ztdest}`;
-                if (newRule.macsrc) rule += ` macsrc ${newRule.macsrc}`;
-                if (newRule.macdest) rule += ` macdest ${newRule.macdest}`;
+                const ruleConditions = [];
+                
+                if (newRule.ethertype) ruleConditions.push(`ethertype ${newRule.ethertype}`);
+                if (newRule.ipsrc) ruleConditions.push(`ipsrc ${newRule.ipsrc}`);
+                if (newRule.ipdest) ruleConditions.push(`ipdest ${newRule.ipdest}`);
+                if (newRule.sport) ruleConditions.push(`sport ${newRule.sport}`);
+                if (newRule.dport) ruleConditions.push(`dport ${newRule.dport}`);
+                if (newRule.ipprotocol) ruleConditions.push(`ipprotocol ${newRule.ipprotocol}`);
+                if (newRule.ztsrc) ruleConditions.push(`ztsrc ${newRule.ztsrc}`);
+                if (newRule.ztdest) ruleConditions.push(`ztdest ${newRule.ztdest}`);
+                if (newRule.macsrc) ruleConditions.push(`macsrc ${newRule.macsrc}`);
+                if (newRule.macdest) ruleConditions.push(`macdest ${newRule.macdest}`);
+                if (newRule.tagOperator && newRule.tagName) {
+                    ruleConditions.push(`${newRule.tagOperator} ${newRule.tagName}`);
+                }
+
+                // Join conditions with 'and' operator if there are multiple conditions
+                if (ruleConditions.length > 0) {
+                    rule += ' ' + ruleConditions.join(' and ');
+                }
                 rule += ";";
         
                 setImportedRules(prev => {
@@ -676,7 +704,27 @@
                             onChange: (e) => setNewRule({...newRule, ipprotocol: e.target.value}),
                         }, protocols.map(proto => 
                             e('option', { value: proto.value, key: proto.value }, proto.label)
-                        ))
+                        )),
+                        // Adicionar campos de tag no formulário principal
+                        e('select', {
+                            key: 'tagOperator',
+                            value: newRule.tagOperator || '',
+                            onChange: (e) => setNewRule({...newRule, tagOperator: e.target.value}),
+                        }, [
+                            e('option', { value: '' }, 'Select tag operator'),
+                            e('option', { value: 'tdeq' }, 'Tags are equal (tdeq)'),
+                            e('option', { value: 'tdne' }, 'Tags are different (tdne)'),
+                            e('option', { value: 'tdgt' }, 'Destination tag greater than (tdgt)'),
+                            e('option', { value: 'tdlt' }, 'Destination tag less than (tdlt)'),
+                            e('option', { value: 'tsgt' }, 'Source tag greater than (tsgt)'),
+                            e('option', { value: 'tslt' }, 'Source tag less than (tslt)')
+                        ]),
+                        e('input', {
+                            key: 'tagName',
+                            placeholder: 'Tag name (e.g., department)',
+                            value: newRule.tagName || '',
+                            onChange: (e) => setNewRule({...newRule, tagName: e.target.value})
+                        })
                     ]),
                     e('button', {
                         className: 'btn',
@@ -761,6 +809,58 @@
                     ])
                 ]),
 
+                // After the Create Tag section, add the new Tag Rules section
+                e('div', { key: 'createTagRule', className: 'card' }, [
+                    e('h2', { key: 'createTagRuleTitle' }, 'Create Rule with Tags'),
+                    e('div', { key: 'tagRuleForm', className: 'form-group' }, [
+                        e('select', {
+                            key: 'tagAction',
+                            value: newRule.action,
+                            onChange: (e) => setNewRule({...newRule, action: e.target.value}),
+                        }, [
+                            e('option', { value: 'accept' }, 'Accept'),
+                            e('option', { value: 'drop' }, 'Drop')
+                        ]),
+                        e('select', {
+                            key: 'tagOperator',
+                            value: newRule.tagOperator || '',
+                            onChange: (e) => setNewRule({...newRule, tagOperator: e.target.value}),
+                        }, [
+                            e('option', { value: '' }, 'Select tag operator'),
+                            e('option', { value: 'tdeq' }, 'Tags are equal (tdeq)'),
+                            e('option', { value: 'tdne' }, 'Tags are different (tdne)'),
+                            e('option', { value: 'tdgt' }, 'Destination tag greater than (tdgt)'),
+                            e('option', { value: 'tdlt' }, 'Destination tag less than (tdlt)'),
+                            e('option', { value: 'tsgt' }, 'Source tag greater than (tsgt)'),
+                            e('option', { value: 'tslt' }, 'Source tag less than (tslt)')
+                        ]),
+                        e('input', {
+                            key: 'tagName',
+                            placeholder: 'Tag name (e.g., department)',
+                            value: newRule.tagName || '',
+                            onChange: (e) => setNewRule({...newRule, tagName: e.target.value})
+                        })
+                    ]),
+                    e('button', {
+                        className: 'btn',
+                        onClick: () => {
+                            if (!newRule.tagOperator || !newRule.tagName) {
+                                alert('Please select a tag operator and enter a tag name');
+                                return;
+                            }
+                            const rule = `${newRule.action} ${newRule.tagOperator} ${newRule.tagName};`;
+                            const comment = `# ${explainRule(rule)}`;
+                            setImportedRules(prev => prev ? `${prev}\n\n${comment}\n${rule}` : `${comment}\n${rule}`);
+                            
+                            // Limpar os campos de tag após adicionar a regra
+                            setNewRule(prev => ({
+                                ...prev,
+                                tagOperator: "",
+                                tagName: ""
+                            }));
+                        }
+                    }, 'Add Tag Rule')
+                ]),
                 explanations.length > 0 && e('div', { key: 'explanations', className: 'card' }, [
                     e('ul', { key: 'explanationsList' },
                         explanations.map((item, index) =>
