@@ -215,28 +215,63 @@
             { value: "ipx_b", label: "IPX B" }
         ];
 
+        const actionOptions = [
+            { value: "accept", label: "Accept" },
+            { value: "drop", label: "Drop" },
+            { value: "break", label: "Break" },
+            { value: "tee", label: "Tee (mirror)" },
+            { value: "watch", label: "Watch (copy)" },
+            { value: "redirect", label: "Redirect" },
+            { value: "priority", label: "Priority" }
+        ];
+
+        const tagOperators = [
+            { value: "", label: "Select tag operator" },
+            { value: "teq", label: "Tags equal (teq)" },
+            { value: "tdiff", label: "Tags different (tdiff)" },
+            { value: "tseq", label: "Sender tag equal (tseq)" },
+            { value: "treq", label: "Receiver tag equal (treq)" },
+            { value: "tand", label: "Tags AND (tand)" },
+            { value: "tor", label: "Tags OR (tor)" },
+            { value: "txor", label: "Tags XOR (txor)" },
+            { value: "tdeq", label: "Legacy: tags equal (tdeq)" },
+            { value: "tdne", label: "Legacy: tags different (tdne)" },
+            { value: "tdgt", label: "Legacy: destination tag greater (tdgt)" },
+            { value: "tdlt", label: "Legacy: destination tag lower (tdlt)" },
+            { value: "tsgt", label: "Legacy: source tag greater (tsgt)" },
+            { value: "tslt", label: "Legacy: source tag lower (tslt)" }
+        ];
+
+        const CHARACTERISTIC_NAMES = new Set([
+            "inbound", "multicast", "broadcast", "ipauth", "macauth",
+            "tcp_fin", "tcp_syn", "tcp_rst", "tcp_psh", "tcp_ack", "tcp_urg",
+            "tcp_ece", "tcp_cwr", "tcp_ns", "tcp_rs2", "tcp_rs1", "tcp_rs0"
+        ]);
+
+        const ACTION_KEYWORDS = new Set(["accept", "drop", "break", "tee", "watch", "redirect", "priority"]);
+        const MATCH_ARG_COUNTS = {
+            ztsrc: 1, ztdest: 1, vlan: 1, vlanpcp: 1, vlandei: 1, ethertype: 1,
+            macsrc: 1, macdest: 1, ipsrc: 1, ipdest: 1, iptos: 2, ipprotocol: 1,
+            icmp: 2, sport: 1, dport: 1, chr: 1, framesize: 1, random: 1,
+            tand: 2, tor: 2, txor: 2, tdiff: 2, teq: 2, tseq: 2, treq: 2,
+            tdeq: 1, tdne: 1, tdgt: 1, tdlt: 1, tsgt: 1, tslt: 1
+        };
+
         const normalizeRule = (rule) => {
-            // Check if it's a tag definition
             if (rule.trim().startsWith('tag ')) {
                 return rule.split('\n')
                     .map(line => {
                         const trimmed = line.trim();
-                        if (trimmed.startsWith('tag')) {
-                            return '# Define a new tag\n' + line;
-                        } else if (trimmed.startsWith('id')) {
-                            return '# Set unique identifier for the tag\n' + line;
-                        } else if (trimmed.startsWith('enum')) {
-                            return '# Define enum value and its name\n' + line;
-                        } else if (trimmed.startsWith('default')) {
-                            return '# Set default value when no enum matches\n' + line;
-                        }
+                        if (trimmed.startsWith('tag')) return '# Define a new tag\n' + line;
+                        if (trimmed.startsWith('id')) return '# Set unique identifier for the tag\n' + line;
+                        if (trimmed.startsWith('enum')) return '# Define enum value and its name\n' + line;
+                        if (trimmed.startsWith('default')) return '# Set default value when no enum matches\n' + line;
                         return line;
                     })
                     .join('\n');
             }
 
-            // Original logic for other rules
-            const combined = rule
+            return rule
                 .split('\n')
                 .map(line => line.trim())
                 .filter(line => !line.startsWith('#'))
@@ -245,16 +280,175 @@
                 .replace(/\s*;\s*/g, ';')
                 .replace(/\s+and\s+/g, ' and ')
                 .trim();
-            
-            if (combined.includes(' and ')) {
-                return combined;
+        };
+
+        const tokenize = (text) => text.replace(/;/g, ' ; ').trim().split(/\s+/).filter(Boolean);
+
+        const isValidZeroTierAddress = (value) => !value || /^[0-9a-fA-F]{10}$/.test(value);
+        const parseNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : NaN;
+
+        const isRangeOrNumber = (value, max, min = 0) => {
+            if (!value) return true;
+            if (value.includes('-')) {
+                const [start, end] = value.split('-');
+                const s = parseNumber(start);
+                const e = parseNumber(end);
+                return Number.isInteger(s) && Number.isInteger(e) && s >= min && e >= min && s <= max && e <= max && e >= s;
             }
-            
-            return combined;
+            const n = parseNumber(value);
+            return Number.isInteger(n) && n >= min && n <= max;
+        };
+
+        const validateMatchValue = (keyword, args) => {
+            switch (keyword) {
+                case "ztsrc":
+                case "ztdest":
+                    return isValidZeroTierAddress(args[0]) ? null : "Invalid ZeroTier address (expected 10 hex chars).";
+                case "sport":
+                case "dport":
+                case "framesize":
+                    return isRangeOrNumber(args[0], 65535, 0) ? null : `Invalid numeric range for ${keyword}.`;
+                case "vlan":
+                    return isRangeOrNumber(args[0], 4095, 0) ? null : "Invalid VLAN ID (0-4095).";
+                case "vlanpcp":
+                    return isRangeOrNumber(args[0], 7, 0) ? null : "Invalid VLAN PCP (0-7).";
+                case "vlandei":
+                    return isRangeOrNumber(args[0], 1, 0) ? null : "Invalid VLAN DEI (0-1).";
+                case "iptos":
+                    if (!isRangeOrNumber(args[0], 255, 0)) return "Invalid IPTOS mask (0-255).";
+                    return isRangeOrNumber(args[1], 255, 0) ? null : "Invalid IPTOS value/range (0-255).";
+                case "icmp":
+                    if (!isRangeOrNumber(args[0], 255, 0)) return "Invalid ICMP type (0-255).";
+                    return isRangeOrNumber(args[1], 255, -1) ? null : "Invalid ICMP code (-1 to 255).";
+                case "random": {
+                    const n = Number(args[0]);
+                    return Number.isNaN(n) || n < 0 || n > 1 ? "Invalid random probability (0.0-1.0)." : null;
+                }
+                case "chr":
+                    return args[0].split(',').every(item => {
+                        const token = item.trim().toLowerCase();
+                        if (!token) return false;
+                        if (CHARACTERISTIC_NAMES.has(token)) return true;
+                        const n = Number(token);
+                        return Number.isInteger(n) && n >= 0 && n <= 63;
+                    }) ? null : "Invalid chr list. Use known names or bit indexes 0-63.";
+                default:
+                    return null;
+            }
+        };
+
+        const validateRuleSet = (source) => {
+            const noComments = source
+                .split('\n')
+                .map(line => line.replace(/#.*/, ''))
+                .join('\n');
+            const statements = [];
+            let current = '';
+            let line = 1;
+            let col = 1;
+            let startLine = 1;
+            let startCol = 1;
+
+            for (const ch of noComments) {
+                if (current.length === 0 && /\S/.test(ch)) {
+                    startLine = line;
+                    startCol = col;
+                }
+
+                if (ch === ';') {
+                    if (current.trim()) {
+                        statements.push({ line: startLine, col: startCol, raw: current.trim(), code: current.trim() });
+                    }
+                    current = '';
+                } else {
+                    current += ch;
+                }
+
+                if (ch === '\n') {
+                    line += 1;
+                    col = 1;
+                } else {
+                    col += 1;
+                }
+            }
+
+            if (current.trim()) {
+                return { ok: false, line: startLine, col: startCol, message: "Missing ';' at end of statement." };
+            }
+
+            for (const statement of statements) {
+                const tokens = tokenize(statement.code);
+                if (tokens.length === 0) continue;
+
+                if (tokens[0] === 'tag') continue;
+                if (!ACTION_KEYWORDS.has(tokens[0])) {
+                    return { ok: false, line: statement.line, col: statement.col, message: `Unsupported action "${tokens[0]}".` };
+                }
+
+                let index = 1;
+                const action = tokens[0];
+                if ((action === 'tee' || action === 'watch') && tokens.length >= 3) {
+                    if (!isRangeOrNumber(tokens[1], 65535, 0)) {
+                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[1]) + 1, message: "Invalid tee/watch max length (0-65535)." };
+                    }
+                    if (!isValidZeroTierAddress(tokens[2])) {
+                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[2]) + 1, message: "Invalid tee/watch target (10 hex chars)." };
+                    }
+                    index = 3;
+                } else if (action === 'redirect' && tokens.length >= 2) {
+                    if (!isValidZeroTierAddress(tokens[1])) {
+                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[1]) + 1, message: "Invalid redirect target (10 hex chars)." };
+                    }
+                    index = 2;
+                } else if (action === 'priority' && tokens.length >= 2) {
+                    if (!isRangeOrNumber(tokens[1], 2147483647, 0)) {
+                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[1]) + 1, message: "Invalid priority value." };
+                    }
+                    index = 2;
+                }
+
+                while (index < tokens.length) {
+                    const token = tokens[index].toLowerCase();
+                    if (token === 'and' || token === 'or' || token === 'not') {
+                        index += 1;
+                        continue;
+                    }
+                    const argsCount = MATCH_ARG_COUNTS[token];
+                    if (!argsCount) {
+                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[index]) + 1, message: `Unsupported matcher "${token}".` };
+                    }
+                    const args = [];
+                    for (let i = 0; i < argsCount; i++) {
+                        if (index + i + 1 >= tokens.length) {
+                            return { ok: false, line: statement.line, col: statement.raw.length, message: `Missing argument for matcher "${token}".` };
+                        }
+                        args.push(tokens[index + i + 1]);
+                    }
+                    const validationError = validateMatchValue(token, args);
+                    if (validationError) {
+                        return { ok: false, line: statement.line, col: statement.raw.indexOf(args[0]) + 1, message: validationError };
+                    }
+                    index += argsCount + 1;
+                }
+            }
+
+            return { ok: true };
+        };
+
+        const explainCondition = (keyword, args) => {
+            const labels = {
+                ipsrc: "source IP", ipdest: "destination IP", sport: "source port", dport: "destination port",
+                ipprotocol: "IP protocol", ethertype: "ethertype", ztsrc: "ZeroTier source", ztdest: "ZeroTier destination",
+                macsrc: "MAC source", macdest: "MAC destination", vlan: "VLAN", vlanpcp: "VLAN PCP", vlandei: "VLAN DEI",
+                iptos: "IP TOS mask/value", icmp: "ICMP type/code", framesize: "frame size", random: "random match", chr: "characteristics",
+                tand: "tag AND", tor: "tag OR", txor: "tag XOR", tdiff: "tag difference", teq: "tag equality", tseq: "sender tag", treq: "receiver tag",
+                tdeq: "legacy tag equality", tdne: "legacy tag difference", tdgt: "legacy destination tag greater", tdlt: "legacy destination tag lower",
+                tsgt: "legacy source tag greater", tslt: "legacy source tag lower"
+            };
+            return `${labels[keyword] || keyword} ${args.join(' ')}`.trim();
         };
 
         const explainRule = (rule) => {
-            // Normalize the rule by removing line breaks and extra spaces
             const normalizedRule = rule
                 .replace(/\n/g, ' ')
                 .replace(/\s+/g, ' ')
@@ -262,7 +456,6 @@
             
             if (!normalizedRule) return "";
             
-            // Check if it's a tag definition
             if (normalizedRule.startsWith('tag ')) {
                 try {
                     const parts = normalizedRule.split(' ');
@@ -294,90 +487,72 @@
                     return "Unknown or malformed tag";
                 }
             }
-            
-            // Original rule explanation logic for accept/drop rules
-            if (!(normalizedRule.startsWith('accept') || normalizedRule.startsWith('drop')) || 
-                !normalizedRule.endsWith(';')) {
+
+            if (!normalizedRule.endsWith(';')) {
                 return "";
             }
-            
-            const parts = normalizedRule.toLowerCase().split(" ");
-            const action = parts[0];
-            
+
             try {
-                const ruleMap = {};
-                let isNotRule = false;
-                
-                // Parse all parts of the combined rule
-                for (let i = 1; i < parts.length; i++) {
-                    if (parts[i] === "not") {
-                        isNotRule = true;
+                const tokens = tokenize(normalizedRule.slice(0, -1).toLowerCase());
+                if (tokens.length === 0) return "";
+                const action = tokens[0];
+                if (!ACTION_KEYWORDS.has(action)) return "Unknown rule";
+
+                let index = 1;
+                const actionParts = [];
+                if ((action === "tee" || action === "watch") && tokens.length >= 3) {
+                    actionParts.push(`length ${tokens[1]}`, `target ${tokens[2]}`);
+                    index = 3;
+                } else if ((action === "redirect" || action === "priority") && tokens.length >= 2) {
+                    actionParts.push(action === "redirect" ? `target ${tokens[1]}` : `value ${tokens[1]}`);
+                    index = 2;
+                }
+
+                const conditions = [];
+                let prefix = "";
+                while (index < tokens.length) {
+                    const token = tokens[index];
+                    if (token === "and") {
+                        prefix = "and ";
+                        index += 1;
                         continue;
                     }
-                    if (parts[i] === "and") continue;
-                    
-                    const key = parts[i].replace(";", "");
-                    const value = parts[i + 1]?.replace(";", "");
-                    if (value) {
-                        ruleMap[key] = value;
-                        i++; // Skip the next part since we used it as value
+                    if (token === "or") {
+                        prefix = "or ";
+                        index += 1;
+                        continue;
                     }
-                }
-
-                // Check for standalone "accept;" rule
-                if (normalizedRule === "accept;") {
-                    return "Allows all traffic";
-                }
-
-                // Rest of the function remains the same
-                if (Object.keys(ruleMap).length === 0) {
-                    return action === "accept" ? "Allows all traffic" : "Blocks all traffic";
-                }
-
-                if (action === "drop") {
-                    if (isNotRule && parts.includes("ethertype")) {
-                        const types = Object.values(ruleMap)
-                            .filter(v => v)
-                            .join(", ");
-                        return `Blocks all packets that are not of type: ${types}`;
+                    if (token === "not") {
+                        prefix += "not ";
+                        index += 1;
+                        continue;
                     }
-
-                    const conditions = [];
-                    if (ruleMap.ipsrc) conditions.push(`source IP ${ruleMap.ipsrc}`);
-                    if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
-                    if (ruleMap.sport) conditions.push(`source port ${ruleMap.sport}`);
-                    if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
-                    if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
-                    if (ruleMap.tdeq) conditions.push(`tags are equal (${ruleMap.tdeq})`);
-                    if (ruleMap.tdne) conditions.push(`tags are different (${ruleMap.tdne})`);
-                    if (ruleMap.tdgt) conditions.push(`destination tag is greater than (${ruleMap.tdgt})`);
-                    if (ruleMap.tdlt) conditions.push(`destination tag is less than (${ruleMap.tdlt})`);
-                    if (ruleMap.tsgt) conditions.push(`source tag is greater than (${ruleMap.tsgt})`);
-                    if (ruleMap.tslt) conditions.push(`source tag is less than (${ruleMap.tslt})`);
-
-                    return conditions.length > 0
-                        ? `Blocks packets with ${conditions.join(" and ")}`
-                        : "Blocks all packets";
+                    const argsCount = MATCH_ARG_COUNTS[token] || 0;
+                    if (argsCount === 0) break;
+                    const args = [];
+                    for (let i = 0; i < argsCount; i++) {
+                        args.push(tokens[index + i + 1] || "");
+                    }
+                    conditions.push(`${prefix}${explainCondition(token, args)}`.trim());
+                    prefix = "";
+                    index += argsCount + 1;
                 }
 
-                if (action === "accept") {
-                    const conditions = [];
-                    if (ruleMap.ipsrc) conditions.push(`source IP ${ruleMap.ipsrc}`);
-                    if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
-                    if (ruleMap.sport) conditions.push(`source port ${ruleMap.sport}`);
-                    if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
-                    if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
-                    if (ruleMap.tdeq) conditions.push(`tags are equal (${ruleMap.tdeq})`);
-                    if (ruleMap.tdne) conditions.push(`tags are different (${ruleMap.tdne})`);
-                    if (ruleMap.tdgt) conditions.push(`destination tag is greater than (${ruleMap.tdgt})`);
-                    if (ruleMap.tdlt) conditions.push(`destination tag is less than (${ruleMap.tdlt})`);
-                    if (ruleMap.tsgt) conditions.push(`source tag is greater than (${ruleMap.tsgt})`);
-                    if (ruleMap.tslt) conditions.push(`source tag is less than (${ruleMap.tslt})`);
+                const actionLabel = {
+                    accept: "Allows",
+                    drop: "Blocks",
+                    break: "Stops rule processing for",
+                    tee: "Mirrors",
+                    watch: "Watches",
+                    redirect: "Redirects",
+                    priority: "Sets priority for"
+                }[action] || "Applies to";
 
-                    return conditions.length > 0
-                        ? `Allows packets with ${conditions.join(" and ")}`
-                        : "Allows all packets";
+                const extra = actionParts.length ? ` (${actionParts.join(", ")})` : "";
+                if (conditions.length === 0) {
+                    return `${actionLabel} all traffic${extra}`;
                 }
+                return `${actionLabel} traffic${extra} when ${conditions.join(" ")}`;
             } catch (error) {
                 console.error("Error analyzing rule:", error);
                 return "Unknown or malformed rule";
@@ -389,34 +564,51 @@
         function App() {
             const [importedRules, setImportedRules] = React.useState("");
             const [explanations, setExplanations] = React.useState([]);
+            const [analysisError, setAnalysisError] = React.useState("");
             const [newTag, setNewTag] = React.useState({
                 name: '',
                 id: '',
                 enums: []
             });
             const [newRule, setNewRule] = React.useState({
-                                action: "accept",
-                                ipsrc: "",
-                                ipdest: "",
-                                sport: "",
-                                dport: "",
-                                ipprotocol: "",
-                                ethertype: "",
-                                ztsrc: "",
-                                ztdest: "",
-                                macsrc: "",
-                                macdest: "",
-                                // Adicionando os campos para regras com tags
-                                tagOperator: "",
-                                tagName: ""
-                            });
+                action: "accept",
+                actionValue: "",
+                actionTarget: "",
+                addAntiSpoofPreset: false,
+                ipsrc: "",
+                ipdest: "",
+                sport: "",
+                dport: "",
+                ipprotocol: "",
+                ethertype: "",
+                ztsrc: "",
+                ztdest: "",
+                macsrc: "",
+                macdest: "",
+                vlan: "",
+                vlanpcp: "",
+                vlandei: "",
+                iptosMask: "",
+                iptosRange: "",
+                icmpType: "",
+                icmpCode: "",
+                framesize: "",
+                random: "",
+                chr: "",
+                tagOperator: "",
+                tagName: "",
+                tagValue: ""
+            });
             const [invalidFields, setInvalidFields] = React.useState({
                 ipsrc: false,
                 ipdest: false,
                 sport: false,
                 dport: false,
                 macsrc: false,
-                macdest: false
+                macdest: false,
+                ztsrc: false,
+                ztdest: false,
+                actionTarget: false
             });
 
             const macPattern = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
@@ -469,6 +661,7 @@
                 return Number.isInteger(num) && num >= 1 && num <= 65535;
             };
             const isValidMac = (value) => !value || macPattern.test(value);
+            const isValidZeroTier = (value) => !value || /^[0-9a-fA-F]{10}$/.test(value);
 
             const validateField = (value, field, validator) => {
                 const isValid = validator(value);
@@ -480,7 +673,6 @@
             };
 
             const handleCreateRule = () => {
-                // Clear port fields if ICMP or ICMPv6 is selected
                 if (newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6') {
                     newRule.sport = '';
                     newRule.dport = '';
@@ -492,6 +684,9 @@
                 const isDportValid = isValidPort(newRule.dport);
                 const isMacSrcValid = isValidMac(newRule.macsrc);
                 const isMacDestValid = isValidMac(newRule.macdest);
+                const isZtSrcValid = isValidZeroTier(newRule.ztsrc);
+                const isZtDestValid = isValidZeroTier(newRule.ztdest);
+                const isActionTargetValid = isValidZeroTier(newRule.actionTarget);
 
                 setInvalidFields({
                     ipsrc: !isIpSrcValid,
@@ -499,46 +694,43 @@
                     sport: !isSportValid,
                     dport: !isDportValid,
                     macsrc: !isMacSrcValid,
-                    macdest: !isMacDestValid
+                    macdest: !isMacDestValid,
+                    ztsrc: !isZtSrcValid,
+                    ztdest: !isZtDestValid,
+                    actionTarget: !isActionTargetValid
                 });
 
-                if (!isIpSrcValid || !isIpDestValid || !isSportValid || !isDportValid || !isMacSrcValid || !isMacDestValid) {
+                if (!isIpSrcValid || !isIpDestValid || !isSportValid || !isDportValid || !isMacSrcValid || !isMacDestValid || !isZtSrcValid || !isZtDestValid || !isActionTargetValid) {
                     alert('Please fix the fields marked in red before adding the rule.');
                     return;
                 }
 
-                // Default rule aligned with ZeroTier docs: drop every Layer 2 frame that is NOT ARP, IPv4, or IPv6
-                const defaultRule = "# Default baseline: drops any Layer 2 frame that is not ARP, IPv4, or IPv6\ndrop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;";
-                
-                // Create comment explaining the new rule
-                let ruleComment = "# ";
-                if (newRule.action === "accept") {
-                    ruleComment += "Allows ";
-                } else {
-                    ruleComment += "Blocks ";
+                let actionPrefix = `${newRule.action}`;
+                if (newRule.action === "tee" || newRule.action === "watch") {
+                    if (!newRule.actionValue || !newRule.actionTarget) {
+                        alert("For tee/watch, provide max length and target ZeroTier address.");
+                        return;
+                    }
+                    if (!isRangeOrNumber(newRule.actionValue, 65535, 0)) {
+                        alert("Invalid tee/watch max length (0-65535).");
+                        return;
+                    }
+                    actionPrefix += ` ${newRule.actionValue} ${newRule.actionTarget.toLowerCase()}`;
+                } else if (newRule.action === "redirect") {
+                    if (!newRule.actionTarget) {
+                        alert("For redirect, provide target ZeroTier address.");
+                        return;
+                    }
+                    actionPrefix += ` ${newRule.actionTarget.toLowerCase()}`;
+                } else if (newRule.action === "priority") {
+                    if (!newRule.actionValue || !isRangeOrNumber(newRule.actionValue, 2147483647, 0)) {
+                        alert("For priority, provide a valid numeric value.");
+                        return;
+                    }
+                    actionPrefix += ` ${newRule.actionValue}`;
                 }
-                
-                const commentConditions = [];
-                if (newRule.ethertype) commentConditions.push(`${newRule.ethertype} traffic`);
-                if (newRule.ipsrc) commentConditions.push(`from ${newRule.ipsrc}`);
-                if (newRule.ipdest) commentConditions.push(`to ${newRule.ipdest}`);
-                if (newRule.sport) commentConditions.push(`source port ${newRule.sport}`);
-                if (newRule.dport) commentConditions.push(`destination port ${newRule.dport}`);
-                if (newRule.ipprotocol) commentConditions.push(`using ${newRule.ipprotocol.toUpperCase()}`);
-                if (newRule.ztsrc) commentConditions.push(`ZeroTier source ${newRule.ztsrc}`);
-                if (newRule.ztdest) commentConditions.push(`ZeroTier destination ${newRule.ztdest}`);
-                if (newRule.macsrc) commentConditions.push(`MAC source ${newRule.macsrc}`);
-                if (newRule.macdest) commentConditions.push(`MAC destination ${newRule.macdest}`);
-                if (newRule.tagOperator && newRule.tagName) {
-                    commentConditions.push(`with tag operation: ${newRule.tagOperator} ${newRule.tagName}`);
-                }
-                
-                ruleComment += commentConditions.length ? commentConditions.join(", ") : "all traffic";
-                
-                // Create the rule
-                let rule = `${newRule.action}`;
+
                 const ruleConditions = [];
-                
                 if (newRule.ethertype) ruleConditions.push(`ethertype ${newRule.ethertype}`);
                 if (newRule.ipsrc) ruleConditions.push(`ipsrc ${newRule.ipsrc}`);
                 if (newRule.ipdest) ruleConditions.push(`ipdest ${newRule.ipdest}`);
@@ -549,21 +741,58 @@
                 if (newRule.ztdest) ruleConditions.push(`ztdest ${newRule.ztdest}`);
                 if (newRule.macsrc) ruleConditions.push(`macsrc ${newRule.macsrc}`);
                 if (newRule.macdest) ruleConditions.push(`macdest ${newRule.macdest}`);
+                if (newRule.vlan) ruleConditions.push(`vlan ${newRule.vlan}`);
+                if (newRule.vlanpcp) ruleConditions.push(`vlanpcp ${newRule.vlanpcp}`);
+                if (newRule.vlandei) ruleConditions.push(`vlandei ${newRule.vlandei}`);
+                if (newRule.iptosMask && newRule.iptosRange) ruleConditions.push(`iptos ${newRule.iptosMask} ${newRule.iptosRange}`);
+                if (newRule.icmpType) ruleConditions.push(`icmp ${newRule.icmpType} ${newRule.icmpCode || '-1'}`);
+                if (newRule.framesize) ruleConditions.push(`framesize ${newRule.framesize}`);
+                if (newRule.random) ruleConditions.push(`random ${newRule.random}`);
+                if (newRule.chr) ruleConditions.push(`chr ${newRule.chr}`);
                 if (newRule.tagOperator && newRule.tagName) {
-                    ruleConditions.push(`${newRule.tagOperator} ${newRule.tagName}`);
+                    if (["tand", "tor", "txor", "tdiff", "teq", "tseq", "treq"].includes(newRule.tagOperator)) {
+                        if (!newRule.tagValue) {
+                            alert("This tag operator requires a tag value.");
+                            return;
+                        }
+                        ruleConditions.push(`${newRule.tagOperator} ${newRule.tagName} ${newRule.tagValue}`);
+                    } else {
+                        ruleConditions.push(`${newRule.tagOperator} ${newRule.tagName}`);
+                    }
                 }
 
-                // Join conditions with 'and' operator if there are multiple conditions
+                let rule = actionPrefix;
                 if (ruleConditions.length > 0) {
                     rule += ' ' + ruleConditions.join(' and ');
                 }
                 rule += ";";
-        
+
+                const validateResult = validateRuleSet(rule);
+                if (!validateResult.ok) {
+                    alert(`Rule validation failed at line ${validateResult.line}, column ${validateResult.col}: ${validateResult.message}`);
+                    return;
+                }
+
+                const ruleComment = `# ${explainRule(rule)}`;
+                const baselineRule = [
+                    "# Default baseline: drop any Layer 2 frame that is not ARP, IPv4, or IPv6",
+                    "drop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;",
+                    ...(newRule.addAntiSpoofPreset ? [
+                        "# Optional anti-spoofing preset: blocks traffic that is not ZeroTier authenticated",
+                        "drop not chr ipauth;"
+                    ] : []),
+                    "accept;"
+                ].join("\n");
+                const hasBaseline = /drop\s+not\s+ethertype\s+arp\s+and\s+not\s+ethertype\s+ipv4\s+and\s+not\s+ethertype\s+ipv6;/i.test(importedRules);
+
                 setImportedRules(prev => {
-                    if (!prev.includes(defaultRule)) {
-                        return defaultRule + "\n\n" + ruleComment + "\n" + rule;
+                    if (!hasBaseline && !prev.trim()) {
+                        return `${baselineRule}\n\n${ruleComment}\n${rule}`;
                     }
-                    return prev + "\n\n" + ruleComment + "\n" + rule;
+                    if (!hasBaseline && prev.trim()) {
+                        return `${baselineRule}\n\n${prev}\n\n${ruleComment}\n${rule}`;
+                    }
+                    return prev ? `${prev}\n\n${ruleComment}\n${rule}` : `${ruleComment}\n${rule}`;
                 });
             };
         
@@ -610,6 +839,14 @@
             };
         
             const handleImportRules = () => {
+                const lintResult = validateRuleSet(importedRules);
+                if (!lintResult.ok) {
+                    setAnalysisError(`Line ${lintResult.line}, column ${lintResult.col}: ${lintResult.message}`);
+                    setExplanations([]);
+                    return;
+                }
+                setAnalysisError("");
+
                 const normalizedInput = importedRules
                     .split('\n')
                     .map(line => line.trim())
@@ -659,6 +896,10 @@
                         style: { marginTop: '1rem' },
                         onClick: handleImportRules
                     }, 'Analyze Imported Rules'),
+                    analysisError && e('p', {
+                        key: 'analysisError',
+                        style: { color: 'var(--danger)', marginTop: '0.8rem', fontWeight: 600 }
+                    }, `Validation error: ${analysisError}`),
                     // Add formatted rules display with line breaks
                     importedRules && e('div', { 
                         key: 'formattedRules',
@@ -703,10 +944,22 @@
                             key: 'action',
                             value: newRule.action,
                             onChange: (e) => setNewRule({...newRule, action: e.target.value}),
-                        }, [
-                            e('option', { value: 'accept' }, 'Accept'),
-                            e('option', { value: 'drop' }, 'Drop')
-                        ]),
+                        }, actionOptions.map(option =>
+                            e('option', { value: option.value, key: option.value }, option.label)
+                        )),
+                        e('input', {
+                            placeholder: 'Action value (for priority OR max length for tee/watch)',
+                            value: newRule.actionValue,
+                            onChange: (e) => setNewRule({...newRule, actionValue: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'Action target ZeroTier address (for tee/watch/redirect)',
+                            value: newRule.actionTarget,
+                            onChange: (e) => setNewRule({...newRule, actionTarget: validateField(e.target.value, "actionTarget", isValidZeroTier)}),
+                            style: {
+                                border: invalidFields.actionTarget ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
+                        }),
                         e('select', {
                             value: newRule.ethertype,
                             onChange: (e) => setNewRule({...newRule, ethertype: e.target.value}),
@@ -716,12 +969,18 @@
                         e('input', {
                             placeholder: 'ZeroTier Source Address',
                             value: newRule.ztsrc,
-                            onChange: (e) => setNewRule({...newRule, ztsrc: e.target.value})
+                            onChange: (e) => setNewRule({...newRule, ztsrc: validateField(e.target.value, "ztsrc", isValidZeroTier)}),
+                            style: {
+                                border: invalidFields.ztsrc ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
                         }),
                         e('input', {
                             placeholder: 'ZeroTier Destination Address',
                             value: newRule.ztdest,
-                            onChange: (e) => setNewRule({...newRule, ztdest: e.target.value})
+                            onChange: (e) => setNewRule({...newRule, ztdest: validateField(e.target.value, "ztdest", isValidZeroTier)}),
+                            style: {
+                                border: invalidFields.ztdest ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
                         }),
                         e('input', {
                             placeholder: 'MAC Source Address',
@@ -797,26 +1056,93 @@
                         }, protocols.map(proto => 
                             e('option', { value: proto.value, key: proto.value }, proto.label)
                         )),
-                        // Adicionar campos de tag no formulário principal
+                        e('input', {
+                            placeholder: 'VLAN ID (0-4095)',
+                            value: newRule.vlan,
+                            onChange: (e) => setNewRule({...newRule, vlan: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'VLAN PCP (0-7)',
+                            value: newRule.vlanpcp,
+                            onChange: (e) => setNewRule({...newRule, vlanpcp: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'VLAN DEI (0 or 1)',
+                            value: newRule.vlandei,
+                            onChange: (e) => setNewRule({...newRule, vlandei: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'IP TOS mask (0-255)',
+                            value: newRule.iptosMask,
+                            onChange: (e) => setNewRule({...newRule, iptosMask: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'IP TOS value/range (e.g. 16 or 16-32)',
+                            value: newRule.iptosRange,
+                            onChange: (e) => setNewRule({...newRule, iptosRange: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'ICMP type (0-255)',
+                            value: newRule.icmpType,
+                            onChange: (e) => setNewRule({...newRule, icmpType: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'ICMP code (-1 to 255)',
+                            value: newRule.icmpCode,
+                            onChange: (e) => setNewRule({...newRule, icmpCode: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'Frame size (e.g. 64 or 64-1500)',
+                            value: newRule.framesize,
+                            onChange: (e) => setNewRule({...newRule, framesize: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'Random probability (0.0-1.0)',
+                            value: newRule.random,
+                            onChange: (e) => setNewRule({...newRule, random: e.target.value})
+                        }),
+                        e('input', {
+                            placeholder: 'Characteristics (e.g. ipauth,tcp_syn or 63,1)',
+                            value: newRule.chr,
+                            onChange: (e) => setNewRule({...newRule, chr: e.target.value})
+                        }),
                         e('select', {
                             key: 'tagOperator',
                             value: newRule.tagOperator || '',
                             onChange: (e) => setNewRule({...newRule, tagOperator: e.target.value}),
-                        }, [
-                            e('option', { value: '' }, 'Select tag operator'),
-                            e('option', { value: 'tdeq' }, 'Tags are equal (tdeq)'),
-                            e('option', { value: 'tdne' }, 'Tags are different (tdne)'),
-                            e('option', { value: 'tdgt' }, 'Destination tag greater than (tdgt)'),
-                            e('option', { value: 'tdlt' }, 'Destination tag less than (tdlt)'),
-                            e('option', { value: 'tsgt' }, 'Source tag greater than (tsgt)'),
-                            e('option', { value: 'tslt' }, 'Source tag less than (tslt)')
-                        ]),
+                        }, tagOperators.map(option =>
+                            e('option', { value: option.value, key: option.value }, option.label)
+                        )),
                         e('input', {
                             key: 'tagName',
                             placeholder: 'Tag name (e.g., department)',
                             value: newRule.tagName || '',
                             onChange: (e) => setNewRule({...newRule, tagName: e.target.value})
-                        })
+                        }),
+                        e('input', {
+                            key: 'tagValue',
+                            placeholder: 'Tag value (required for teq/tdiff/tseq/treq/tand/tor/txor)',
+                            value: newRule.tagValue || '',
+                            onChange: (e) => setNewRule({...newRule, tagValue: e.target.value})
+                        }),
+                        e('label', {
+                            key: 'antiSpoof',
+                            style: {
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                color: 'var(--text-secondary)'
+                            }
+                        }, [
+                            e('input', {
+                                key: 'antiSpoofInput',
+                                type: 'checkbox',
+                                checked: newRule.addAntiSpoofPreset,
+                                onChange: (ev) => setNewRule({...newRule, addAntiSpoofPreset: !!ev.target.checked}),
+                                style: { width: '18px', height: '18px' }
+                            }),
+                            'Add anti-spoof baseline preset (drop not chr ipauth;)'
+                        ])
                     ]),
                     e('button', {
                         className: 'btn',
@@ -909,28 +1235,27 @@
                             key: 'tagAction',
                             value: newRule.action,
                             onChange: (e) => setNewRule({...newRule, action: e.target.value}),
-                        }, [
-                            e('option', { value: 'accept' }, 'Accept'),
-                            e('option', { value: 'drop' }, 'Drop')
-                        ]),
+                        }, actionOptions.map(option =>
+                            e('option', { value: option.value, key: option.value }, option.label)
+                        )),
                         e('select', {
                             key: 'tagOperator',
                             value: newRule.tagOperator || '',
                             onChange: (e) => setNewRule({...newRule, tagOperator: e.target.value}),
-                        }, [
-                            e('option', { value: '' }, 'Select tag operator'),
-                            e('option', { value: 'tdeq' }, 'Tags are equal (tdeq)'),
-                            e('option', { value: 'tdne' }, 'Tags are different (tdne)'),
-                            e('option', { value: 'tdgt' }, 'Destination tag greater than (tdgt)'),
-                            e('option', { value: 'tdlt' }, 'Destination tag less than (tdlt)'),
-                            e('option', { value: 'tsgt' }, 'Source tag greater than (tsgt)'),
-                            e('option', { value: 'tslt' }, 'Source tag less than (tslt)')
-                        ]),
+                        }, tagOperators.map(option =>
+                            e('option', { value: option.value, key: option.value }, option.label)
+                        )),
                         e('input', {
                             key: 'tagName',
                             placeholder: 'Tag name (e.g., department)',
                             value: newRule.tagName || '',
                             onChange: (e) => setNewRule({...newRule, tagName: e.target.value})
+                        }),
+                        e('input', {
+                            key: 'tagValue',
+                            placeholder: 'Tag value (if required)',
+                            value: newRule.tagValue || '',
+                            onChange: (e) => setNewRule({...newRule, tagValue: e.target.value})
                         })
                     ]),
                     e('button', {
@@ -940,7 +1265,19 @@
                                 alert('Please select a tag operator and enter a tag name');
                                 return;
                             }
-                            const rule = `${newRule.action} ${newRule.tagOperator} ${newRule.tagName};`;
+                            const operatorNeedsValue = ["tand", "tor", "txor", "tdiff", "teq", "tseq", "treq"].includes(newRule.tagOperator);
+                            if (operatorNeedsValue && !newRule.tagValue) {
+                                alert('This tag operator requires a tag value.');
+                                return;
+                            }
+                            const rule = operatorNeedsValue
+                                ? `${newRule.action} ${newRule.tagOperator} ${newRule.tagName} ${newRule.tagValue};`
+                                : `${newRule.action} ${newRule.tagOperator} ${newRule.tagName};`;
+                            const lint = validateRuleSet(rule);
+                            if (!lint.ok) {
+                                alert(`Rule validation failed at line ${lint.line}, column ${lint.col}: ${lint.message}`);
+                                return;
+                            }
                             const comment = `# ${explainRule(rule)}`;
                             setImportedRules(prev => prev ? `${prev}\n\n${comment}\n${rule}` : `${comment}\n${rule}`);
                             
@@ -948,7 +1285,8 @@
                             setNewRule(prev => ({
                                 ...prev,
                                 tagOperator: "",
-                                tagName: ""
+                                tagName: "",
+                                tagValue: ""
                             }));
                         }
                     }, 'Add Tag Rule')
