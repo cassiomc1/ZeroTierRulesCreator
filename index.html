@@ -288,8 +288,8 @@
             let cursor = 0;
             tokens.forEach(token => {
                 const idx = raw.indexOf(token, cursor);
-                offsets.push(idx >= 0 ? idx : cursor);
-                cursor = (idx >= 0 ? idx + token.length : cursor + token.length);
+                offsets.push(idx >= 0 ? idx : raw.length);
+                cursor = (idx >= 0 ? idx + token.length : raw.length);
             });
             return offsets;
         };
@@ -431,7 +431,9 @@
                     const args = [];
                     for (let i = 0; i < argsCount; i++) {
                         if (index + i + 1 >= tokens.length) {
-                            return { ok: false, line: statement.line, col: statement.raw.length, message: `Missing argument for matcher "${token}".` };
+                            const lastTokenIndex = Math.max(index, 0);
+                            const lastTokenCol = tokenOffsets[lastTokenIndex] >= 0 ? tokenOffsets[lastTokenIndex] + tokens[lastTokenIndex].length + 1 : statement.raw.length;
+                            return { ok: false, line: statement.line, col: lastTokenCol, message: `Missing argument for matcher "${token}".` };
                         }
                         args.push(tokens[index + i + 1]);
                     }
@@ -739,13 +741,13 @@
                         return;
                     }
                     if (!validateActionValue(newRule.actionValue, 65535, "Invalid tee/watch max length (integer 0-65535).")) return;
-                    actionPrefix += ` ${newRule.actionValue} ${newRule.actionTarget.toLowerCase()}`;
+                    actionPrefix += ` ${newRule.actionValue} ${(newRule.actionTarget || '').toLowerCase()}`;
                 } else if (newRule.action === "redirect") {
                     if (!newRule.actionTarget) {
                         alert("For redirect, provide target ZeroTier address.");
                         return;
                     }
-                    actionPrefix += ` ${newRule.actionTarget.toLowerCase()}`;
+                    actionPrefix += ` ${(newRule.actionTarget || '').toLowerCase()}`;
                 } else if (newRule.action === "priority") {
                     if (!validateActionValue(newRule.actionValue, 2147483647, "For priority, provide a valid integer value >= 0.")) return;
                     actionPrefix += ` ${newRule.actionValue}`;
