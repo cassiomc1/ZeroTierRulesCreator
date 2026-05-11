@@ -283,6 +283,16 @@
         };
 
         const tokenize = (text) => text.replace(/;/g, ' ; ').trim().split(/\s+/).filter(Boolean);
+        const findTokenOffsets = (raw, tokens) => {
+            const offsets = [];
+            let cursor = 0;
+            tokens.forEach(token => {
+                const idx = raw.indexOf(token, cursor);
+                offsets.push(idx >= 0 ? idx : cursor);
+                cursor = (idx >= 0 ? idx + token.length : cursor + token.length);
+            });
+            return offsets;
+        };
 
         const isValidZeroTierAddress = (value) => !value || /^[0-9a-fA-F]{10}$/.test(value);
         const parseNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : NaN;
@@ -379,6 +389,7 @@
             for (const statement of statements) {
                 const tokens = tokenize(statement.code);
                 if (tokens.length === 0) continue;
+                const tokenOffsets = findTokenOffsets(statement.raw, tokens);
 
                 if (tokens[0] === 'tag') continue;
                 if (!ACTION_KEYWORDS.has(tokens[0])) {
@@ -389,20 +400,20 @@
                 const action = tokens[0];
                 if ((action === 'tee' || action === 'watch') && tokens.length >= 3) {
                     if (!isRangeOrNumber(tokens[1], 65535, 0)) {
-                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[1]) + 1, message: "Invalid tee/watch max length (0-65535)." };
+                        return { ok: false, line: statement.line, col: tokenOffsets[1] + 1, message: "Invalid tee/watch max length (integer 0-65535)." };
                     }
                     if (!isValidZeroTierAddress(tokens[2])) {
-                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[2]) + 1, message: "Invalid tee/watch target (10 hex chars)." };
+                        return { ok: false, line: statement.line, col: tokenOffsets[2] + 1, message: "Invalid tee/watch target (10 hex chars)." };
                     }
                     index = 3;
                 } else if (action === 'redirect' && tokens.length >= 2) {
                     if (!isValidZeroTierAddress(tokens[1])) {
-                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[1]) + 1, message: "Invalid redirect target (10 hex chars)." };
+                        return { ok: false, line: statement.line, col: tokenOffsets[1] + 1, message: "Invalid redirect target (10 hex chars)." };
                     }
                     index = 2;
                 } else if (action === 'priority' && tokens.length >= 2) {
                     if (!isRangeOrNumber(tokens[1], 2147483647, 0)) {
-                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[1]) + 1, message: "Invalid priority value." };
+                        return { ok: false, line: statement.line, col: tokenOffsets[1] + 1, message: "Invalid priority value (integer >= 0)." };
                     }
                     index = 2;
                 }
@@ -415,7 +426,7 @@
                     }
                     const argsCount = MATCH_ARG_COUNTS[token];
                     if (!argsCount) {
-                        return { ok: false, line: statement.line, col: statement.raw.indexOf(tokens[index]) + 1, message: `Unsupported matcher "${token}".` };
+                        return { ok: false, line: statement.line, col: tokenOffsets[index] + 1, message: `Unsupported matcher "${token}".` };
                     }
                     const args = [];
                     for (let i = 0; i < argsCount; i++) {
@@ -426,7 +437,7 @@
                     }
                     const validationError = validateMatchValue(token, args);
                     if (validationError) {
-                        return { ok: false, line: statement.line, col: statement.raw.indexOf(args[0]) + 1, message: validationError };
+                        return { ok: false, line: statement.line, col: tokenOffsets[index + 1] + 1, message: validationError };
                     }
                     index += argsCount + 1;
                 }
@@ -662,6 +673,14 @@
             };
             const isValidMac = (value) => !value || macPattern.test(value);
             const isValidZeroTier = (value) => !value || /^[0-9a-fA-F]{10}$/.test(value);
+            const hasBaselineRule = (content) => {
+                const normalized = content
+                    .toLowerCase()
+                    .replace(/#.*/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                return normalized.includes('drop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;');
+            };
 
             const validateField = (value, field, validator) => {
                 const isValid = validator(value);
@@ -705,16 +724,21 @@
                     return;
                 }
 
+                const validateActionValue = (value, max, message) => {
+                    if (!value || !isRangeOrNumber(value, max, 0)) {
+                        alert(message);
+                        return false;
+                    }
+                    return true;
+                };
+
                 let actionPrefix = `${newRule.action}`;
                 if (newRule.action === "tee" || newRule.action === "watch") {
                     if (!newRule.actionValue || !newRule.actionTarget) {
                         alert("For tee/watch, provide max length and target ZeroTier address.");
                         return;
                     }
-                    if (!isRangeOrNumber(newRule.actionValue, 65535, 0)) {
-                        alert("Invalid tee/watch max length (0-65535).");
-                        return;
-                    }
+                    if (!validateActionValue(newRule.actionValue, 65535, "Invalid tee/watch max length (integer 0-65535).")) return;
                     actionPrefix += ` ${newRule.actionValue} ${newRule.actionTarget.toLowerCase()}`;
                 } else if (newRule.action === "redirect") {
                     if (!newRule.actionTarget) {
@@ -723,10 +747,7 @@
                     }
                     actionPrefix += ` ${newRule.actionTarget.toLowerCase()}`;
                 } else if (newRule.action === "priority") {
-                    if (!newRule.actionValue || !isRangeOrNumber(newRule.actionValue, 2147483647, 0)) {
-                        alert("For priority, provide a valid numeric value.");
-                        return;
-                    }
+                    if (!validateActionValue(newRule.actionValue, 2147483647, "For priority, provide a valid integer value >= 0.")) return;
                     actionPrefix += ` ${newRule.actionValue}`;
                 }
 
@@ -783,7 +804,7 @@
                     ] : []),
                     "accept;"
                 ].join("\n");
-                const hasBaseline = /drop\s+not\s+ethertype\s+arp\s+and\s+not\s+ethertype\s+ipv4\s+and\s+not\s+ethertype\s+ipv6;/i.test(importedRules);
+                const hasBaseline = hasBaselineRule(importedRules);
 
                 setImportedRules(prev => {
                     if (!hasBaseline && !prev.trim()) {
@@ -948,7 +969,7 @@
                             e('option', { value: option.value, key: option.value }, option.label)
                         )),
                         e('input', {
-                            placeholder: 'Action value (for priority OR max length for tee/watch)',
+                            placeholder: 'Priority value OR tee/watch max length (required for priority/tee/watch)',
                             value: newRule.actionValue,
                             onChange: (e) => setNewRule({...newRule, actionValue: e.target.value})
                         }),
