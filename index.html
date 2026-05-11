@@ -295,7 +295,12 @@
         };
 
         const isValidZeroTierAddress = (value) => !value || /^[0-9a-fA-F]{10}$/.test(value);
-        const parseNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : NaN;
+        const parseNumber = (value) => {
+            const normalized = String(value ?? "").trim();
+            if (!normalized) return NaN;
+            const parsed = Number(normalized);
+            return Number.isFinite(parsed) ? parsed : NaN;
+        };
 
         const isRangeOrNumber = (value, max, min = 0) => {
             if (!value) return true;
@@ -674,7 +679,6 @@
                 return Number.isInteger(num) && num >= 1 && num <= 65535;
             };
             const isValidMac = (value) => !value || macPattern.test(value);
-            const isValidZeroTier = (value) => !value || /^[0-9a-fA-F]{10}$/.test(value);
             const hasBaselineRule = (content) => {
                 const normalized = content
                     .toLowerCase()
@@ -705,9 +709,9 @@
                 const isDportValid = isValidPort(newRule.dport);
                 const isMacSrcValid = isValidMac(newRule.macsrc);
                 const isMacDestValid = isValidMac(newRule.macdest);
-                const isZtSrcValid = isValidZeroTier(newRule.ztsrc);
-                const isZtDestValid = isValidZeroTier(newRule.ztdest);
-                const isActionTargetValid = isValidZeroTier(newRule.actionTarget);
+                const isZtSrcValid = isValidZeroTierAddress(newRule.ztsrc);
+                const isZtDestValid = isValidZeroTierAddress(newRule.ztdest);
+                const isActionTargetValid = isValidZeroTierAddress(newRule.actionTarget);
 
                 setInvalidFields({
                     ipsrc: !isIpSrcValid,
@@ -978,7 +982,7 @@
                         e('input', {
                             placeholder: 'Action target ZeroTier address (for tee/watch/redirect)',
                             value: newRule.actionTarget,
-                            onChange: (e) => setNewRule({...newRule, actionTarget: validateField(e.target.value, "actionTarget", isValidZeroTier)}),
+                            onChange: (e) => setNewRule({...newRule, actionTarget: validateField(e.target.value, "actionTarget", isValidZeroTierAddress)}),
                             style: {
                                 border: invalidFields.actionTarget ? '2px solid var(--danger)' : '1px solid var(--border-color)'
                             }
@@ -992,7 +996,7 @@
                         e('input', {
                             placeholder: 'ZeroTier Source Address',
                             value: newRule.ztsrc,
-                            onChange: (e) => setNewRule({...newRule, ztsrc: validateField(e.target.value, "ztsrc", isValidZeroTier)}),
+                            onChange: (e) => setNewRule({...newRule, ztsrc: validateField(e.target.value, "ztsrc", isValidZeroTierAddress)}),
                             style: {
                                 border: invalidFields.ztsrc ? '2px solid var(--danger)' : '1px solid var(--border-color)'
                             }
@@ -1000,7 +1004,7 @@
                         e('input', {
                             placeholder: 'ZeroTier Destination Address',
                             value: newRule.ztdest,
-                            onChange: (e) => setNewRule({...newRule, ztdest: validateField(e.target.value, "ztdest", isValidZeroTier)}),
+                            onChange: (e) => setNewRule({...newRule, ztdest: validateField(e.target.value, "ztdest", isValidZeroTierAddress)}),
                             style: {
                                 border: invalidFields.ztdest ? '2px solid var(--danger)' : '1px solid var(--border-color)'
                             }
