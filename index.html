@@ -507,8 +507,8 @@
                     return;
                 }
 
-                // Default rule aligned with ZeroTier docs: allow ARP/IPv4/IPv6 and drop unknown Layer 2 ethertypes
-                const defaultRule = "# Default baseline: allows ARP, IPv4 and IPv6, and blocks other unknown Layer 2 ethertypes\ndrop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;";
+                // Default rule aligned with ZeroTier docs: drop every Layer 2 frame that is NOT ARP, IPv4, or IPv6
+                const defaultRule = "# Default baseline: drops any Layer 2 frame that is not ARP, IPv4, or IPv6\ndrop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;";
                 
                 // Create comment explaining the new rule
                 let ruleComment = "# ";
