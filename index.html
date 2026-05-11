@@ -210,54 +210,6 @@
             return combined;
         };
 
-        const handleImportRules = () => {
-            let currentRule = '';
-            const rules = [];
-            
-            importedRules.split('\n').forEach(line => {
-                const trimmed = line.trim();
-                if (!trimmed || trimmed.startsWith('#')) return;
-                
-                if (trimmed.startsWith('accept') || trimmed.startsWith('drop')) {
-                    if (currentRule && currentRule.endsWith(';')) {
-                        rules.push(currentRule);
-                        currentRule = '';
-                    }
-                    currentRule = trimmed;
-                } else if (currentRule) {
-                    currentRule += ' ' + trimmed;
-                }
-                
-                if (trimmed.endsWith(';')) {
-                    rules.push(currentRule);
-                    currentRule = '';
-                }
-            });
-            
-            if (currentRule) {
-                rules.push(currentRule);
-            }
-            
-            // Format the imported rules text
-            const formattedRules = rules
-                .filter(rule => rule.trim())
-                .filter(rule => rule.startsWith('accept') || rule.startsWith('drop'))
-                .map(rule => rule.replace(/\s+/g, ' ').trim())
-                .join('\n');
-            
-            setImportedRules(formattedRules);
-            
-            const explained = rules
-                .filter(rule => rule.trim())
-                .filter(rule => rule.startsWith('accept') || rule.startsWith('drop'))
-                .map(rule => ({
-                    original: rule.replace(/\s+/g, ' ').trim(),
-                    explanation: explainRule(rule)
-                }));
-            
-            setExplanations(explained);
-        };
-
         const explainRule = (rule) => {
             // Normalize the rule by removing line breaks and extra spaces
             const normalizedRule = rule
@@ -350,6 +302,7 @@
                     const conditions = [];
                     if (ruleMap.ipsrc) conditions.push(`source IP ${ruleMap.ipsrc}`);
                     if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
+                    if (ruleMap.sport) conditions.push(`source port ${ruleMap.sport}`);
                     if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
                     if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
                     if (ruleMap.tdeq) conditions.push(`tags are equal (${ruleMap.tdeq})`);
@@ -368,6 +321,7 @@
                     const conditions = [];
                     if (ruleMap.ipsrc) conditions.push(`source IP ${ruleMap.ipsrc}`);
                     if (ruleMap.ipdest) conditions.push(`destination IP ${ruleMap.ipdest}`);
+                    if (ruleMap.sport) conditions.push(`source port ${ruleMap.sport}`);
                     if (ruleMap.dport) conditions.push(`destination port ${ruleMap.dport}`);
                     if (ruleMap.ipprotocol) conditions.push(`protocol ${ruleMap.ipprotocol}`);
                     if (ruleMap.tdeq) conditions.push(`tags are equal (${ruleMap.tdeq})`);
@@ -415,21 +369,70 @@
                             });
             const [invalidFields, setInvalidFields] = React.useState({
                 ipsrc: false,
-                ipdest: false
+                ipdest: false,
+                sport: false,
+                dport: false,
+                macsrc: false,
+                macdest: false
             });
 
-            const validateIpCidr = (value, field) => {
-                if (!value) return "";
-                
-                // Exige que o IP tenha máscara CIDR
-                const cidrPattern = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([1-9]|[12][0-9]|3[012])$/;
-                const isValid = value ? cidrPattern.test(value) : true;
-                
+            const macPattern = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
+
+            const isValidIPv4 = (ip) => {
+                const parts = ip.split('.');
+                if (parts.length !== 4) return false;
+                return parts.every(part => {
+                    if (!/^\d+$/.test(part)) return false;
+                    const value = Number(part);
+                    return value >= 0 && value <= 255;
+                });
+            };
+
+            const isValidIPv6 = (ip) => {
+                if (!/^[0-9a-fA-F:]+$/.test(ip)) return false;
+                if ((ip.match(/::/g) || []).length > 1) return false;
+
+                const [left = "", right = ""] = ip.split("::");
+                const leftParts = left ? left.split(":") : [];
+                const rightParts = right ? right.split(":") : [];
+                const allParts = [...leftParts, ...rightParts];
+
+                if (allParts.some(part => !/^[0-9a-fA-F]{1,4}$/.test(part))) return false;
+
+                if (ip.includes("::")) {
+                    return allParts.length < 8;
+                }
+
+                return allParts.length === 8;
+            };
+
+            const isValidCidr = (value) => {
+                if (!value) return true;
+                const parts = value.split('/');
+                if (parts.length !== 2) return false;
+
+                const [ip, prefixRaw] = parts;
+                if (!ip || !/^\d+$/.test(prefixRaw)) return false;
+                const prefix = Number(prefixRaw);
+
+                if (isValidIPv4(ip)) return prefix >= 0 && prefix <= 32;
+                if (isValidIPv6(ip)) return prefix >= 0 && prefix <= 128;
+                return false;
+            };
+
+            const isValidPort = (value) => {
+                if (!value) return true;
+                const num = Number(value);
+                return Number.isInteger(num) && num >= 1 && num <= 65535;
+            };
+            const isValidMac = (value) => !value || macPattern.test(value);
+
+            const validateField = (value, field, validator) => {
+                const isValid = validator(value);
                 setInvalidFields(prev => ({
                     ...prev,
-                    [field]: value && !isValid
+                    [field]: !isValid
                 }));
-                
                 return value;
             };
 
@@ -440,16 +443,23 @@
                     newRule.dport = '';
                 }
 
-                const cidrPattern = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([1-9]|[12][0-9]|3[012])$/;
-                const isIpSrcValid = !newRule.ipsrc || cidrPattern.test(newRule.ipsrc);
-                const isIpDestValid = !newRule.ipdest || cidrPattern.test(newRule.ipdest);
+                const isIpSrcValid = isValidCidr(newRule.ipsrc);
+                const isIpDestValid = isValidCidr(newRule.ipdest);
+                const isSportValid = isValidPort(newRule.sport);
+                const isDportValid = isValidPort(newRule.dport);
+                const isMacSrcValid = isValidMac(newRule.macsrc);
+                const isMacDestValid = isValidMac(newRule.macdest);
 
                 setInvalidFields({
                     ipsrc: !isIpSrcValid,
-                    ipdest: !isIpDestValid
+                    ipdest: !isIpDestValid,
+                    sport: !isSportValid,
+                    dport: !isDportValid,
+                    macsrc: !isMacSrcValid,
+                    macdest: !isMacDestValid
                 });
 
-                if (!isIpSrcValid || !isIpDestValid) {
+                if (!isIpSrcValid || !isIpDestValid || !isSportValid || !isDportValid || !isMacSrcValid || !isMacDestValid) {
                     alert('Please fix the fields marked in red before adding the rule.');
                     return;
                 }
@@ -557,11 +567,17 @@
             };
         
             const handleImportRules = () => {
-                const parsedRules = importedRules
-                    .split('\n')  // Changed from split(';') to split('\n')
-                    .map(rule => rule.trim())
-                    .filter(rule => rule && !rule.startsWith('#'))  // Filter out empty lines and comments
-                    .map(rule => rule + (rule.endsWith(';') ? '' : ';'));
+                const normalizedInput = importedRules
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line && !line.startsWith('#'))
+                    .join(' ');
+
+                const parsedRules = normalizedInput
+                    .split(';')
+                    .map(rule => rule.replace(/\s+/g, ' ').trim())
+                    .filter(Boolean)
+                    .map(rule => `${rule};`);
                 
                 const explained = parsedRules.map(rule => ({
                     original: normalizeRule(rule),
@@ -580,7 +596,7 @@
                         marginBottom: '2rem',
                         fontSize: '0.9rem'
                     }
-                }, 'Note: ZeroTier act as a stateless firewall, so you may need to create return traffic rules explicitly.'),
+                }, 'Note: ZeroTier acts as a stateless firewall, so return-traffic rules may need to be created explicitly.'),
                 
                 e('div', { key: 'import', className: 'card' }, [
                     e('h2', { key: 'importTitle' }, 'Import Rules'),
@@ -591,6 +607,12 @@
                         onChange: (e) => setImportedRules(e.target.value),
                         className: 'mb-4'
                     }),
+                    e('button', {
+                        key: 'analyzeRules',
+                        className: 'btn',
+                        style: { marginTop: '1rem' },
+                        onClick: handleImportRules
+                    }, 'Analyze Imported Rules'),
                     // Add formatted rules display with line breaks
                     importedRules && e('div', { 
                         key: 'formattedRules',
@@ -658,46 +680,70 @@
                         e('input', {
                             placeholder: 'MAC Source Address',
                             value: newRule.macsrc,
-                            onChange: (e) => setNewRule({...newRule, macsrc: e.target.value})
+                            onChange: (e) => setNewRule({
+                                ...newRule,
+                                macsrc: validateField(e.target.value, "macsrc", isValidMac)
+                            }),
+                            style: {
+                                border: invalidFields.macsrc ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
                         }),
                         e('input', {
                             placeholder: 'MAC Destination Address',
                             value: newRule.macdest,
-                            onChange: (e) => setNewRule({...newRule, macdest: e.target.value})
+                            onChange: (e) => setNewRule({
+                                ...newRule,
+                                macdest: validateField(e.target.value, "macdest", isValidMac)
+                            }),
+                            style: {
+                                border: invalidFields.macdest ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
                         }),
                         e('input', {
-                            placeholder: 'Source IP (e.g., 10.0.0.0/24)',
+                            placeholder: 'Source CIDR (IPv4/IPv6, e.g., 10.0.0.0/24 or 2001:db8::/64)',
                             value: newRule.ipsrc,
                             onChange: (e) => setNewRule({
                                 ...newRule, 
-                                ipsrc: validateIpCidr(e.target.value, "ipsrc")
+                                ipsrc: validateField(e.target.value, "ipsrc", isValidCidr)
                             }),
                             style: {
-                                border: invalidFields.ipsrc ? '2px solid var(--danger)' : '1px solid #d1d5db'
+                                border: invalidFields.ipsrc ? '2px solid var(--danger)' : '1px solid var(--border-color)'
                             }
                         }),
                         e('input', {
-                            placeholder: 'Destination IP (e.g., 192.168.1.0/24)',
+                            placeholder: 'Destination CIDR (IPv4/IPv6)',
                             value: newRule.ipdest,
                             onChange: (e) => setNewRule({
                                 ...newRule, 
-                                ipdest: validateIpCidr(e.target.value, "ipdest")
+                                ipdest: validateField(e.target.value, "ipdest", isValidCidr)
                             }),
                             style: {
-                                border: invalidFields.ipdest ? '2px solid var(--danger)' : '1px solid #d1d5db'
+                                border: invalidFields.ipdest ? '2px solid var(--danger)' : '1px solid var(--border-color)'
                             }
                         }),
                         e('input', {
-                            placeholder: 'Source port (e.g., 80)',
+                            placeholder: 'Source port (1-65535)',
                             value: newRule.sport,
-                            onChange: (e) => setNewRule({...newRule, sport: e.target.value}),
-                            disabled: newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6'
+                            onChange: (e) => setNewRule({
+                                ...newRule,
+                                sport: validateField(e.target.value, "sport", isValidPort)
+                            }),
+                            disabled: newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6',
+                            style: {
+                                border: invalidFields.sport ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
                         }),
                         e('input', {
-                            placeholder: 'Destination port (e.g., 80)',
+                            placeholder: 'Destination port (1-65535)',
                             value: newRule.dport,
-                            onChange: (e) => setNewRule({...newRule, dport: e.target.value}),
-                            disabled: newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6'
+                            onChange: (e) => setNewRule({
+                                ...newRule,
+                                dport: validateField(e.target.value, "dport", isValidPort)
+                            }),
+                            disabled: newRule.ipprotocol === 'icmp' || newRule.ipprotocol === 'icmp6',
+                            style: {
+                                border: invalidFields.dport ? '2px solid var(--danger)' : '1px solid var(--border-color)'
+                            }
                         }),
                         e('select', {
                             value: newRule.ipprotocol,
@@ -883,8 +929,8 @@
         <p>Email: <a href="mailto:cassio@bytesec.pro" style="color: var(--primary); text-decoration: none;">cassio@bytesec.pro</a></p>
         <p>Linkedin: <a href="https://www.linkedin.com/in/marquescassio/" target="_blank" style="color: var(--primary); text-decoration: none;">https://www.linkedin.com/in/marquescassio/</a></p>
         <p>GitHub: <a href="https://github.com/cassiomc1/ZeroTierRulesCreator" target="_blank" style="color: var(--primary); text-decoration: none;">https://github.com/cassiomc1/ZeroTierRulesCreator</a></p>
-        <p style="margin-top: 1rem; font-style: italic;">New features coming soon, such as creating rules using tags.</p>
-        <p style="margin-top: 1rem; opacity: 0.7;">2025 - Rev 1.1</p>
+        <p style="margin-top: 1rem; font-style: italic;">Updated to improve rule validation, import analysis, and tag-based workflows.</p>
+        <p style="margin-top: 1rem; opacity: 0.7;">2026 - Rev 1.2</p>
     </div>
 </body>
 </html>
