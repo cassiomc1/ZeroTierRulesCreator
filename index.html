@@ -320,6 +320,68 @@
         ]);
 
         const ACTION_KEYWORDS = new Set(["accept", "drop", "break", "tee", "watch", "redirect", "priority"]);
+
+        // Returns the default baseline rule set for the chosen network security mode.
+        // Whitelist mode: all traffic is blocked unless explicitly accepted (ends with drop;).
+        // Blacklist mode: all traffic is allowed unless explicitly dropped (ends with accept;).
+        const getBaselineTemplate = (mode, antiSpoof) => {
+            if (mode === 'whitelist') {
+                const lines = [
+                    '# WHITELIST MODE: traffic is BLOCKED unless explicitly ACCEPTED',
+                    '# Allow essential Layer 2 protocols',
+                    'accept ethertype arp;',
+                    'accept ethertype ipv6;',
+                    'accept ethertype ipv4;',
+                ];
+                if (antiSpoof) {
+                    lines.push('# Anti-spoofing: block traffic without ZeroTier IP authentication');
+                    lines.push('drop not chr ipauth;');
+                }
+                lines.push('# Block everything not explicitly accepted above');
+                lines.push('drop;');
+                return lines.join('\n');
+            }
+            const lines = [
+                '# BLACKLIST MODE: traffic is ALLOWED unless explicitly DROPPED',
+                '# Block non-IP/ARP/IPv6 Layer 2 frames',
+                'drop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;',
+            ];
+            if (antiSpoof) {
+                lines.push('# Anti-spoofing: block traffic without ZeroTier IP authentication');
+                lines.push('drop not chr ipauth;');
+            }
+            lines.push('# Allow all remaining traffic');
+            lines.push('accept;');
+            return lines.join('\n');
+        };
+
+        // Returns true if the given rule set already contains an unconditional
+        // terminator matching the chosen mode (drop; for whitelist, accept; for blacklist).
+        const hasTerminatorRule = (content, mode) => {
+            const term = mode === 'whitelist' ? 'drop;' : 'accept;';
+            return content.split('\n').some(line => line.replace(/#.*/, '').trim() === term);
+        };
+
+        // Inserts newLines immediately before the last unconditional terminator
+        // (drop; for whitelist, accept; for blacklist).  Falls back to appending.
+        const insertBeforeTerminator = (existing, newLines, mode) => {
+            const term = mode === 'whitelist' ? 'drop;' : 'accept;';
+            const lines = existing.split('\n');
+            let lastIdx = -1;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                if (lines[i].replace(/#.*/, '').trim() === term) {
+                    lastIdx = i;
+                    break;
+                }
+            }
+            if (lastIdx >= 0) {
+                const before = lines.slice(0, lastIdx);
+                const after = lines.slice(lastIdx);
+                return [...before, '', newLines, ...after].join('\n');
+            }
+            return existing ? `${existing}\n\n${newLines}` : newLines;
+        };
+
         const MATCH_ARG_COUNTS = {
             ztsrc: 1, ztdest: 1, vlan: 1, vlanpcp: 1, vlandei: 1, ethertype: 1,
             macsrc: 1, macdest: 1, ipsrc: 1, ipdest: 1, iptos: 2, ipprotocol: 1,
@@ -488,8 +550,8 @@
                     }
                     index = 2;
                 } else if (action === 'priority' && tokens.length >= 2) {
-                    if (!isRangeOrNumber(tokens[1], 2147483647, 0)) {
-                        return { ok: false, line: statement.line, col: tokenOffsets[1] + 1, message: "Invalid priority value (integer >= 0)." };
+                    if (!isRangeOrNumber(tokens[1], 255, 0)) {
+                        return { ok: false, line: statement.line, col: tokenOffsets[1] + 1, message: "Invalid priority QoS bucket (0-255)." };
                     }
                     index = 2;
                 }
@@ -701,6 +763,8 @@
                 ztdest: false,
                 actionTarget: false
             });
+            // 'blacklist' = permissive (ends with accept;), 'whitelist' = restrictive (ends with drop;)
+            const [networkMode, setNetworkMode] = React.useState('blacklist');
 
             const normalizedStatements = React.useMemo(() => importedRules
                 .split('\n')
@@ -778,18 +842,18 @@
 
             const isValidPort = (value) => {
                 if (!value) return true;
-                const num = Number(value);
-                return Number.isInteger(num) && num >= 1 && num <= 65535;
+                const str = String(value);
+                if (str.includes('-')) {
+                    const parts = str.split('-');
+                    if (parts.length !== 2) return false;
+                    const startPort = Number(parts[0].trim());
+                    const endPort = Number(parts[1].trim());
+                    return Number.isInteger(startPort) && Number.isInteger(endPort) && startPort >= 0 && endPort >= 0 && startPort <= 65535 && endPort <= 65535 && startPort <= endPort;
+                }
+                const num = Number(str.trim());
+                return Number.isInteger(num) && num >= 0 && num <= 65535;
             };
             const isValidMac = (value) => !value || macPattern.test(value);
-            const hasBaselineRule = (content) => {
-                const normalized = content
-                    .toLowerCase()
-                    .replace(/#.*/g, '')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-                return normalized.includes('drop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;');
-            };
 
             const validateField = (value, field, validator) => {
                 const isValid = validator(value);
@@ -856,7 +920,7 @@
                     }
                     actionPrefix += ` ${(newRule.actionTarget || '').toLowerCase()}`;
                 } else if (newRule.action === "priority") {
-                    if (!validateActionValue(newRule.actionValue, 2147483647, "For priority, provide a valid integer value >= 0.")) return;
+                    if (!validateActionValue(newRule.actionValue, 255, "For priority, provide a valid QoS bucket value (0-255).")) return;
                     actionPrefix += ` ${newRule.actionValue}`;
                 }
 
@@ -904,25 +968,20 @@
                 }
 
                 const ruleComment = `# ${explainRule(rule)}`;
-                const baselineRule = [
-                    "# Default baseline: drop any Layer 2 frame that is not ARP, IPv4, or IPv6",
-                    "drop not ethertype arp and not ethertype ipv4 and not ethertype ipv6;",
-                    ...(newRule.addAntiSpoofPreset ? [
-                        "# Optional anti-spoofing preset: blocks traffic that is not ZeroTier authenticated",
-                        "drop not chr ipauth;"
-                    ] : []),
-                    "accept;"
-                ].join("\n");
-                const hasBaseline = hasBaselineRule(importedRules);
+                const ruleLines = `${ruleComment}\n${rule}`;
 
                 setImportedRules(prev => {
-                    if (!hasBaseline && !prev.trim()) {
-                        return `${baselineRule}\n\n${ruleComment}\n${rule}`;
+                    if (!prev.trim()) {
+                        // Empty textarea: load the mode-appropriate baseline and insert the rule
+                        const baseline = getBaselineTemplate(networkMode, newRule.addAntiSpoofPreset);
+                        return insertBeforeTerminator(baseline, ruleLines, networkMode);
                     }
-                    if (!hasBaseline && prev.trim()) {
-                        return `${baselineRule}\n\n${prev}\n\n${ruleComment}\n${rule}`;
+                    if (hasTerminatorRule(prev, networkMode)) {
+                        // Baseline with terminator already present: insert rule before it
+                        return insertBeforeTerminator(prev, ruleLines, networkMode);
                     }
-                    return prev ? `${prev}\n\n${ruleComment}\n${rule}` : `${ruleComment}\n${rule}`;
+                    // No recognised terminator: just append
+                    return `${prev}\n\n${ruleLines}`;
                 });
             };
         
@@ -1053,6 +1112,11 @@
                     ]),
                     e('div', { key: 'heroActions', className: 'section-tools' }, [
                         e('button', {
+                            key: 'goMode',
+                            className: 'btn btn-secondary',
+                            onClick: () => scrollToSection('mode-section')
+                        }, 'Go to Mode'),
+                        e('button', {
                             key: 'goImport',
                             className: 'btn btn-secondary',
                             onClick: () => scrollToSection('import-rules-section')
@@ -1069,7 +1133,87 @@
                         }, 'Go to Tags')
                     ])
                 ]),
-                
+
+                // ── Network Security Mode selector ──────────────────────────────────
+                e('div', { key: 'modeSelector', id: 'mode-section', className: 'card' }, [
+                    e('h2', { key: 'modeTitle' }, 'Network Security Mode'),
+                    e('p', {
+                        key: 'modeIntro',
+                        style: { color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.6' }
+                    }, 'Choose the default behaviour for unmatched traffic. This affects the baseline template and where new rules are inserted.'),
+                    e('div', { key: 'modeButtons', style: { display: 'flex', gap: '0.8rem', flexWrap: 'wrap', marginBottom: '1rem' } }, [
+                        e('button', {
+                            key: 'blacklistBtn',
+                            className: networkMode === 'blacklist' ? 'btn' : 'btn btn-secondary',
+                            onClick: () => setNetworkMode('blacklist')
+                        }, '\uD83D\uDFE2 Blacklist (Permissive)'),
+                        e('button', {
+                            key: 'whitelistBtn',
+                            className: networkMode === 'whitelist' ? 'btn' : 'btn btn-secondary',
+                            onClick: () => setNetworkMode('whitelist')
+                        }, '\uD83D\uDD34 Whitelist (Restrictive)')
+                    ]),
+                    e('div', {
+                        key: 'modeDesc',
+                        style: {
+                            background: 'rgba(2,6,23,0.55)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '12px',
+                            padding: '0.9rem 1rem',
+                            marginBottom: '1rem',
+                            lineHeight: '1.7'
+                        }
+                    }, networkMode === 'blacklist'
+                        ? [
+                            e('strong', { key: 'h', style: { color: '#4ade80' } }, '\uD83D\uDFE2 Blacklist mode — Permissive'),
+                            e('br', { key: 'br1' }),
+                            'All traffic is ',
+                            e('strong', { key: 'a' }, 'ALLOWED'),
+                            ' by default. Add ',
+                            e('code', { key: 'c' }, 'drop'),
+                            ' rules for specific traffic you want to block.',
+                            e('br', { key: 'br2' }),
+                            'The baseline ends with an unconditional ',
+                            e('code', { key: 'c2' }, 'accept;'),
+                            '. Best for open internal networks.'
+                        ]
+                        : [
+                            e('strong', { key: 'h', style: { color: '#f87171' } }, '\uD83D\uDD34 Whitelist mode — Restrictive'),
+                            e('br', { key: 'br1' }),
+                            'All traffic is ',
+                            e('strong', { key: 'a' }, 'BLOCKED'),
+                            ' by default. Add ',
+                            e('code', { key: 'c' }, 'accept'),
+                            ' rules only for traffic you explicitly want to allow.',
+                            e('br', { key: 'br2' }),
+                            'The baseline ends with an unconditional ',
+                            e('code', { key: 'c2' }, 'drop;'),
+                            '. Best for security-sensitive networks.'
+                        ]
+                    ),
+                    e('div', { key: 'templatePreview', style: { marginBottom: '1rem' } }, [
+                        e('p', {
+                            key: 'previewLabel',
+                            style: { color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.4rem' }
+                        }, 'Baseline template for selected mode:'),
+                        e('pre', {
+                            key: 'previewText',
+                            className: 'rule-text',
+                            style: { fontSize: '0.85rem', whiteSpace: 'pre-wrap' }
+                        }, getBaselineTemplate(networkMode, false))
+                    ]),
+                    e('button', {
+                        key: 'loadTemplate',
+                        className: 'btn btn-secondary',
+                        onClick: () => {
+                            if (importedRules.trim() && !window.confirm('This will permanently replace all current rules with the selected mode template. All existing rules will be lost. Continue?')) return;
+                            setImportedRules(getBaselineTemplate(networkMode, false));
+                            setExplanations([]);
+                            setAnalysisError('');
+                        }
+                    }, `Load ${networkMode === 'blacklist' ? 'Blacklist' : 'Whitelist'} Template`)
+                ]),
+
                 e('div', { key: 'import', id: 'import-rules-section', className: 'card' }, [
                     e('h2', { key: 'importTitle' }, 'Import Rules'),
                     e('textarea', {
@@ -1151,7 +1295,7 @@
                             e('option', { value: option.value, key: option.value }, option.label)
                         )),
                         e('input', {
-                            placeholder: 'Priority value OR tee/watch max length (required for priority/tee/watch)',
+                            placeholder: 'Priority QoS bucket (0-255) OR tee/watch max bytes (0-65535; 0 = all)',
                             value: newRule.actionValue,
                             onChange: (e) => setNewRule({...newRule, actionValue: e.target.value})
                         }),
@@ -1230,7 +1374,7 @@
                             }
                         }),
                         e('input', {
-                            placeholder: 'Source port (1-65535)',
+                            placeholder: 'Source port (0-65535 or range, e.g. 1024-2048)',
                             value: newRule.sport,
                             onChange: (e) => setNewRule({
                                 ...newRule,
@@ -1242,7 +1386,7 @@
                             }
                         }),
                         e('input', {
-                            placeholder: 'Destination port (1-65535)',
+                            placeholder: 'Destination port (0-65535 or range, e.g. 80-443)',
                             value: newRule.dport,
                             onChange: (e) => setNewRule({
                                 ...newRule,
@@ -1526,8 +1670,8 @@
         <p>Email: <a href="mailto:cassio@bytesec.pro" style="color: var(--primary); text-decoration: none;">cassio@bytesec.pro</a></p>
         <p>Linkedin: <a href="https://www.linkedin.com/in/marquescassio/" target="_blank" style="color: var(--primary); text-decoration: none;">https://www.linkedin.com/in/marquescassio/</a></p>
         <p>GitHub: <a href="https://github.com/cassiomc1/ZeroTierRulesCreator" target="_blank" style="color: var(--primary); text-decoration: none;">https://github.com/cassiomc1/ZeroTierRulesCreator</a></p>
-        <p style="margin-top: 1rem; font-style: italic;">Updated to improve rule validation, import analysis, and tag-based workflows.</p>
-        <p style="margin-top: 1rem; opacity: 0.7;">2026 - Rev 1.2</p>
+        <p style="margin-top: 1rem; font-style: italic;">Added whitelist/blacklist mode selector, smart rule insertion, corrected ZeroTier spec values (port 0–65535, priority 0–255 QoS bucket).</p>
+        <p style="margin-top: 1rem; opacity: 0.7;">2026 - Rev 1.3</p>
     </div>
 </body>
 </html>
