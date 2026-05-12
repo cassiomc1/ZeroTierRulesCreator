@@ -41,6 +41,7 @@ Ao usar o botão **Load Template**, a ferramenta carrega o baseline do modo sele
 - Seletor de modo de rede: **Blacklist** (permissivo) e **Whitelist** (restritivo).
 - Templates de baseline para cada modo, com inserção inteligente de novas regras.
 - Criação de regras com ações `accept`, `drop`, `break`, `tee`, `watch`, `redirect` e `priority`.
+- Geração automática da regra de tráfego de retorno ao adicionar regras direcionais (firewall stateless).
 - Suporte a filtros de:
   - `ethertype`
   - `ipsrc` e `ipdest` (CIDR IPv4 e IPv6)
