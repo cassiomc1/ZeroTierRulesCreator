@@ -393,10 +393,10 @@
             macdest: "macsrc",
             tseq: "treq",
             treq: "tseq",
-            tsgt: "tdlt",
-            tdgt: "tslt",
-            tslt: "tdgt",
-            tdlt: "tsgt"
+            tsgt: "tdgt",
+            tdgt: "tsgt",
+            tslt: "tdlt",
+            tdlt: "tslt"
         };
 
         // Creates the reverse-flow equivalent of a rule for stateless filtering.
@@ -444,7 +444,6 @@
                     const argIndex = index + i + 1;
                     if (argIndex >= tokens.length) return null;
                     const arg = tokens[argIndex];
-                    if (typeof arg === 'undefined') return null;
                     output.push(arg);
                 }
                 index += argsCount + 1;
