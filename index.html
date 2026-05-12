@@ -160,6 +160,62 @@
             line-height: 1.6;
         }
 
+        .section-tools {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-top: 1rem;
+        }
+
+        .actions-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.7rem;
+            margin-top: 1rem;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(120deg, #334155, #475569);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
+        }
+
+        .btn-danger {
+            background: linear-gradient(120deg, #dc2626, #ef4444);
+            box-shadow: 0 10px 24px rgba(127, 29, 29, 0.35);
+        }
+
+        .quick-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.7rem;
+            margin-top: 1rem;
+        }
+
+        .stat-chip {
+            background: rgba(15, 23, 42, 0.58);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 0.65rem 0.8rem;
+        }
+
+        .stat-chip strong {
+            display: block;
+            font-size: 1.15rem;
+            color: var(--text-primary);
+        }
+
+        .stat-chip span {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .status-text {
+            color: var(--accent);
+            margin-top: 0.7rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
         @media (min-width: 768px) {
             body {
                 padding: 2rem;
@@ -175,6 +231,21 @@
 
             h1 {
                 font-size: 2.2rem;
+            }
+        }
+
+        @media (max-width: 767px) {
+            body {
+                padding: 0.8rem;
+            }
+
+            .card, .hero {
+                padding: 1rem;
+                border-radius: 14px;
+            }
+
+            .btn {
+                width: 100%;
             }
         }
     </style>
@@ -583,6 +654,8 @@
             const [importedRules, setImportedRules] = React.useState("");
             const [explanations, setExplanations] = React.useState([]);
             const [analysisError, setAnalysisError] = React.useState("");
+            const [copyFeedback, setCopyFeedback] = React.useState("");
+            const [quickFilter, setQuickFilter] = React.useState("");
             const [newTag, setNewTag] = React.useState({
                 name: '',
                 id: '',
@@ -628,6 +701,36 @@
                 ztdest: false,
                 actionTarget: false
             });
+
+            const normalizedStatements = React.useMemo(() => importedRules
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line && !line.startsWith('#'))
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .split(';')
+                .map(statement => statement.trim())
+                .filter(Boolean), [importedRules]);
+
+            const stats = React.useMemo(() => {
+                const tags = normalizedStatements.filter(statement => statement.startsWith('tag ')).length;
+                const rules = normalizedStatements.length - tags;
+                return {
+                    totalStatements: normalizedStatements.length,
+                    totalRules: Math.max(rules, 0),
+                    totalTags: tags,
+                    totalExplanations: explanations.length
+                };
+            }, [normalizedStatements, explanations.length]);
+
+            const filteredExplanations = React.useMemo(() => {
+                const term = quickFilter.trim().toLowerCase();
+                if (!term) return explanations;
+                return explanations.filter(item =>
+                    item.original.toLowerCase().includes(term) ||
+                    item.explanation.toLowerCase().includes(term)
+                );
+            }, [explanations, quickFilter]);
 
             const macPattern = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
 
@@ -893,6 +996,30 @@
                 
                 setExplanations(explained);
             };
+
+            const handleClearRules = () => {
+                setImportedRules("");
+                setExplanations([]);
+                setAnalysisError("");
+                setQuickFilter("");
+                setCopyFeedback("");
+            };
+
+            const handleCopyRules = async () => {
+                if (!importedRules.trim()) return;
+                try {
+                    await navigator.clipboard.writeText(importedRules);
+                    setCopyFeedback("Rules copied to clipboard.");
+                } catch (error) {
+                    setCopyFeedback("Failed to copy rules.");
+                }
+                setTimeout(() => setCopyFeedback(""), 2200);
+            };
+
+            const scrollToSection = (id) => {
+                const node = document.getElementById(id);
+                if (node) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            };
         
             return e('div', { className: 'container' }, [
                 e('section', { key: 'hero', className: 'hero' }, [
@@ -905,10 +1032,45 @@
                             fontSize: '0.92rem',
                             color: 'var(--text-secondary)'
                         }
-                    }, 'Note: ZeroTier acts as a stateless firewall, so return-traffic rules may need to be created explicitly.')
+                    }, 'Note: ZeroTier acts as a stateless firewall, so return-traffic rules may need to be created explicitly.'),
+                    e('div', { key: 'quickStats', className: 'quick-stats' }, [
+                        e('div', { key: 'totalStatements', className: 'stat-chip' }, [
+                            e('strong', { key: 'value' }, String(stats.totalStatements)),
+                            e('span', { key: 'label' }, 'Total statements')
+                        ]),
+                        e('div', { key: 'totalRules', className: 'stat-chip' }, [
+                            e('strong', { key: 'value' }, String(stats.totalRules)),
+                            e('span', { key: 'label' }, 'Traffic rules')
+                        ]),
+                        e('div', { key: 'totalTags', className: 'stat-chip' }, [
+                            e('strong', { key: 'value' }, String(stats.totalTags)),
+                            e('span', { key: 'label' }, 'Tag definitions')
+                        ]),
+                        e('div', { key: 'totalExplanations', className: 'stat-chip' }, [
+                            e('strong', { key: 'value' }, String(stats.totalExplanations)),
+                            e('span', { key: 'label' }, 'Analyzed rules')
+                        ])
+                    ]),
+                    e('div', { key: 'heroActions', className: 'section-tools' }, [
+                        e('button', {
+                            key: 'goImport',
+                            className: 'btn btn-secondary',
+                            onClick: () => scrollToSection('import-rules-section')
+                        }, 'Go to Import'),
+                        e('button', {
+                            key: 'goCreate',
+                            className: 'btn btn-secondary',
+                            onClick: () => scrollToSection('create-rule-section')
+                        }, 'Go to Create Rule'),
+                        e('button', {
+                            key: 'goTag',
+                            className: 'btn btn-secondary',
+                            onClick: () => scrollToSection('create-tag-section')
+                        }, 'Go to Tags')
+                    ])
                 ]),
                 
-                e('div', { key: 'import', className: 'card' }, [
+                e('div', { key: 'import', id: 'import-rules-section', className: 'card' }, [
                     e('h2', { key: 'importTitle' }, 'Import Rules'),
                     e('textarea', {
                         key: 'importTextarea',
@@ -917,12 +1079,26 @@
                         onChange: (e) => setImportedRules(e.target.value),
                         className: 'mb-4'
                     }),
-                    e('button', {
-                        key: 'analyzeRules',
-                        className: 'btn',
-                        style: { marginTop: '1rem' },
-                        onClick: handleImportRules
-                    }, 'Analyze Imported Rules'),
+                    e('div', { key: 'importActions', className: 'actions-row' }, [
+                        e('button', {
+                            key: 'analyzeRules',
+                            className: 'btn',
+                            onClick: handleImportRules
+                        }, 'Analyze Imported Rules'),
+                        e('button', {
+                            key: 'copyRules',
+                            className: 'btn btn-secondary',
+                            onClick: handleCopyRules,
+                            disabled: !importedRules.trim()
+                        }, 'Copy Rules'),
+                        e('button', {
+                            key: 'clearRules',
+                            className: 'btn btn-danger',
+                            onClick: handleClearRules,
+                            disabled: !importedRules.trim()
+                        }, 'Clear All')
+                    ]),
+                    copyFeedback && e('p', { key: 'copyFeedback', className: 'status-text' }, copyFeedback),
                     analysisError && e('p', {
                         key: 'analysisError',
                         style: { color: 'var(--danger)', marginTop: '0.8rem', fontWeight: 600 }
@@ -964,7 +1140,7 @@
                     ]),
                 ]),
         
-                e('div', { key: 'create', className: 'card' }, [
+                e('div', { key: 'create', id: 'create-rule-section', className: 'card' }, [
                     e('h2', { key: 'createTitle' }, 'Create New Rule'),
                     e('div', { key: 'form', className: 'form-group' }, [
                         e('select', {
@@ -1178,7 +1354,7 @@
                 ]),
 
                 // Add the tag creation section here
-                e('div', { key: 'createTag', className: 'card' }, [
+                e('div', { key: 'createTag', id: 'create-tag-section', className: 'card' }, [
                     e('h2', { key: 'createTagTitle' }, 'Create Tag'),
                     e('p', {
                         key: 'tagExample',
@@ -1255,7 +1431,7 @@
                 ]),
 
                 // After the Create Tag section, add the new Tag Rules section
-                e('div', { key: 'createTagRule', className: 'card' }, [
+                e('div', { key: 'createTagRule', id: 'create-tag-rule-section', className: 'card' }, [
                     e('h2', { key: 'createTagRuleTitle' }, 'Create Rule with Tags'),
                     e('div', { key: 'tagRuleForm', className: 'form-group' }, [
                         e('select', {
@@ -1318,15 +1494,25 @@
                         }
                     }, 'Add Tag Rule')
                 ]),
-                explanations.length > 0 && e('div', { key: 'explanations', className: 'card' }, [
+                explanations.length > 0 && e('div', { key: 'explanations', id: 'explanations-section', className: 'card' }, [
+                    e('input', {
+                        key: 'quickFilter',
+                        placeholder: 'Filter analyzed rules by term (ip, vlan, tag, etc.)',
+                        value: quickFilter,
+                        onChange: (event) => setQuickFilter(event.target.value)
+                    }),
                     e('ul', { key: 'explanationsList' },
-                        explanations.map((item, index) =>
+                        filteredExplanations.map((item, index) =>
                             e('li', { key: index }, [
                                 e('div', { key: 'rule', className: 'rule-text' }, item.original),
                                 e('div', { key: 'explanation' }, item.explanation)
                             ])
                         )
-                    )
+                    ),
+                    filteredExplanations.length === 0 && e('p', {
+                        key: 'noResults',
+                        style: { marginTop: '0.8rem', color: 'var(--text-secondary)' }
+                    }, 'No analyzed rules match this filter.')
                 ])
             ]);
         }
