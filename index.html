@@ -432,7 +432,7 @@
                     break;
                 }
 
-                const isDirectionalMatcher = Object.prototype.hasOwnProperty.call(REVERSE_MATCHERS, lowered);
+                const isDirectionalMatcher = lowered in REVERSE_MATCHERS;
                 const swappedMatcher = isDirectionalMatcher ? REVERSE_MATCHERS[lowered] : lowered;
                 if (isDirectionalMatcher) hasDirectionalMatcher = true;
                 output.push(swappedMatcher);
