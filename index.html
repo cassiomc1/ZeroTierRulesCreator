@@ -399,9 +399,13 @@
             tdlt: "tslt"
         };
 
+        // Creates the reverse-flow equivalent of a rule for stateless filtering.
+        // Returns null when the rule has no directional matcher to invert.
         const buildReverseTrafficRule = (rule) => {
-            if (!rule || !rule.trim().endsWith(';')) return null;
-            const tokens = tokenize(rule.slice(0, -1));
+            if (!rule || !rule.trim()) return null;
+            const normalizedRule = rule.trim();
+            const ruleBody = normalizedRule.endsWith(';') ? normalizedRule.slice(0, -1) : normalizedRule;
+            const tokens = tokenize(ruleBody);
             if (tokens.length === 0 || !ACTION_KEYWORDS.has(tokens[0].toLowerCase())) return null;
 
             const output = [tokens[0]];
@@ -438,7 +442,8 @@
                 output.push(swappedMatcher);
                 for (let i = 0; i < argsCount; i++) {
                     const arg = tokens[index + i + 1];
-                    if (typeof arg !== 'undefined') output.push(arg);
+                    if (typeof arg === 'undefined') return null;
+                    output.push(arg);
                 }
                 index += argsCount + 1;
             }
