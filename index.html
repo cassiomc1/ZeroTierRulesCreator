@@ -382,6 +382,90 @@
             return existing ? `${existing}\n\n${newLines}` : newLines;
         };
 
+        const REVERSE_MATCHERS = {
+            ipsrc: "ipdest",
+            ipdest: "ipsrc",
+            sport: "dport",
+            dport: "sport",
+            ztsrc: "ztdest",
+            ztdest: "ztsrc",
+            macsrc: "macdest",
+            macdest: "macsrc",
+            tseq: "treq",
+            treq: "tseq",
+            tsgt: "tdgt",
+            tdgt: "tsgt",
+            tslt: "tdlt",
+            tdlt: "tslt"
+        };
+
+        const buildReverseTrafficRule = (rule) => {
+            if (!rule || !rule.trim().endsWith(';')) return null;
+            const tokens = tokenize(rule.slice(0, -1));
+            if (tokens.length === 0 || !ACTION_KEYWORDS.has(tokens[0].toLowerCase())) return null;
+
+            const output = [tokens[0]];
+            let index = 1;
+            const action = tokens[0].toLowerCase();
+
+            if ((action === 'tee' || action === 'watch') && tokens.length >= 3) {
+                output.push(tokens[1], tokens[2]);
+                index = 3;
+            } else if ((action === 'redirect' || action === 'priority') && tokens.length >= 2) {
+                output.push(tokens[1]);
+                index = 2;
+            }
+
+            let hasDirectionalMatcher = false;
+            while (index < tokens.length) {
+                const token = tokens[index];
+                const lowered = token.toLowerCase();
+                if (lowered === 'and' || lowered === 'or' || lowered === 'not') {
+                    output.push(token);
+                    index += 1;
+                    continue;
+                }
+
+                const argsCount = MATCH_ARG_COUNTS[lowered];
+                if (!argsCount) {
+                    output.push(...tokens.slice(index));
+                    break;
+                }
+
+                const swappedMatcher = REVERSE_MATCHERS[lowered] || lowered;
+                if (swappedMatcher !== lowered) hasDirectionalMatcher = true;
+                output.push(swappedMatcher);
+                for (let i = 0; i < argsCount; i++) {
+                    const arg = tokens[index + i + 1];
+                    if (typeof arg !== 'undefined') output.push(arg);
+                }
+                index += argsCount + 1;
+            }
+
+            if (!hasDirectionalMatcher) return null;
+            return `${output.join(' ')};`;
+        };
+
+        const buildRuleBlockWithAutoReturn = (rule) => {
+            const blocks = [`# ${explainRule(rule)}\n${rule}`];
+            const reverseRule = buildReverseTrafficRule(rule);
+            if (reverseRule) {
+                blocks.push(`# Return traffic (auto-generated)\n${reverseRule}`);
+            }
+            return blocks.join('\n\n');
+        };
+
+        const insertRuleBlockIntoRuleset = (existing, ruleBlock, mode, antiSpoof) => {
+            if (!existing.trim()) {
+                const baseline = getBaselineTemplate(mode, !!antiSpoof);
+                return insertBeforeTerminator(baseline, ruleBlock, mode);
+            }
+            if (hasTerminatorRule(existing, mode)) {
+                return insertBeforeTerminator(existing, ruleBlock, mode);
+            }
+            return `${existing}\n\n${ruleBlock}`;
+        };
+
         const MATCH_ARG_COUNTS = {
             ztsrc: 1, ztdest: 1, vlan: 1, vlanpcp: 1, vlandei: 1, ethertype: 1,
             macsrc: 1, macdest: 1, ipsrc: 1, ipdest: 1, iptos: 2, ipprotocol: 1,
@@ -967,21 +1051,10 @@
                     return;
                 }
 
-                const ruleComment = `# ${explainRule(rule)}`;
-                const ruleLines = `${ruleComment}\n${rule}`;
+                const ruleLines = buildRuleBlockWithAutoReturn(rule);
 
                 setImportedRules(prev => {
-                    if (!prev.trim()) {
-                        // Empty textarea: load the mode-appropriate baseline and insert the rule
-                        const baseline = getBaselineTemplate(networkMode, newRule.addAntiSpoofPreset);
-                        return insertBeforeTerminator(baseline, ruleLines, networkMode);
-                    }
-                    if (hasTerminatorRule(prev, networkMode)) {
-                        // Baseline with terminator already present: insert rule before it
-                        return insertBeforeTerminator(prev, ruleLines, networkMode);
-                    }
-                    // No recognised terminator: just append
-                    return `${prev}\n\n${ruleLines}`;
+                    return insertRuleBlockIntoRuleset(prev, ruleLines, networkMode, newRule.addAntiSpoofPreset);
                 });
             };
         
@@ -1625,8 +1698,8 @@
                                 alert(`Rule validation failed at line ${lint.line}, column ${lint.col}: ${lint.message}`);
                                 return;
                             }
-                            const comment = `# ${explainRule(rule)}`;
-                            setImportedRules(prev => prev ? `${prev}\n\n${comment}\n${rule}` : `${comment}\n${rule}`);
+                            const ruleBlock = buildRuleBlockWithAutoReturn(rule);
+                            setImportedRules(prev => insertRuleBlockIntoRuleset(prev, ruleBlock, networkMode, false));
                             
                             // Limpar os campos de tag após adicionar a regra
                             setNewRule(prev => ({
