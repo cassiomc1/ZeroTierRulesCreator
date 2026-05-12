@@ -432,8 +432,9 @@
                     break;
                 }
 
-                const swappedMatcher = REVERSE_MATCHERS[lowered] || lowered;
-                if (swappedMatcher !== lowered) hasDirectionalMatcher = true;
+                const isDirectionalMatcher = Object.prototype.hasOwnProperty.call(REVERSE_MATCHERS, lowered);
+                const swappedMatcher = isDirectionalMatcher ? REVERSE_MATCHERS[lowered] : lowered;
+                if (isDirectionalMatcher) hasDirectionalMatcher = true;
                 output.push(swappedMatcher);
                 for (let i = 0; i < argsCount; i++) {
                     const arg = tokens[index + i + 1];
@@ -446,6 +447,8 @@
             return `${output.join(' ')};`;
         };
 
+        // Builds a comment+rule block and, when applicable, appends the
+        // auto-generated reverse-flow rule required by stateless filtering.
         const buildRuleBlockWithAutoReturn = (rule) => {
             const blocks = [`# ${explainRule(rule)}\n${rule}`];
             const reverseRule = buildReverseTrafficRule(rule);
